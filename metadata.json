@@ -1,0 +1,6 @@
+{
+  "name": "VidoMix",
+  "description": "منصة فيديوهات حديثة تجمع بين الفيديوهات الطويلة والقصيرة بهوية أصلية وسرعة فائقة",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,105 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions for secure role and backend validation
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Backend-verified Admin: Checks verified Firebase Auth Token email OR custom claims
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == 'ameadmriem@gmail.com' ||
+        request.auth.token.admin == true ||
+        request.auth.token.role == 'admin'
+      );
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      // Anyone can read public user profiles
+      allow read: if true;
+
+      // Only the authenticated user can create their own profile document
+      // Strict role enforcement: role must be 'admin' ONLY for primary admin email, otherwise 'user'
+      allow create: if isOwner(userId) &&
+        (
+          (request.auth.token.email == 'ameadmriem@gmail.com' && request.resource.data.role == 'admin' && request.resource.data.isAdmin == true) ||
+          (request.auth.token.email != 'ameadmriem@gmail.com' && request.resource.data.role == 'user' && request.resource.data.isAdmin == false)
+        );
+
+      // Normal users CANNOT modify privileged fields (role, isAdmin, admin, permissions, email, uid)
+      allow update: if (isOwner(userId) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isAdmin', 'admin', 'permissions', 'email', 'id', 'uid'])
+      ) || isAdmin();
+
+      allow delete: if isAdmin();
+    }
+
+    // Channels Collection
+    match /channels/{channelId} {
+      allow read: if true;
+      allow create, update: if isAuthenticated() && (request.resource.data.userId == request.auth.uid || isAdmin());
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Videos & Shorts Collection
+    match /videos/{videoId} {
+      allow read: if true;
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Comments Collection
+    match /comments/{commentId} {
+      allow read: if true;
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Monetization Profiles (Creator Program)
+    match /monetization_profiles/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      // Regular creators can only submit their application with status 'PENDING_REVIEW'
+      allow create: if isOwner(userId) && request.resource.data.status == 'PENDING_REVIEW';
+      // Only Admin can approve, reject, or suspend monetization
+      allow update: if isAdmin() || (
+        isOwner(userId) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'tier', 'currentBalance', 'pendingBalance', 'lifetimeEarnings'])
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Payout Requests
+    match /payouts/{payoutId} {
+      allow read: if (isAuthenticated() && resource.data.userId == request.auth.uid) || isAdmin();
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid && request.resource.data.status == 'PENDING';
+      // Only Admin can change payout status (PAID / REJECTED)
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Reports Collection
+    match /reports/{reportId} {
+      allow create: if isAuthenticated();
+      allow read, update, delete: if isAdmin();
+    }
+
+    // Admin Settings & Anti-Fraud Logs
+    match /admin_settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /ad_impressions/{impressionId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.creatorId == request.auth.uid);
+      allow create: if isAuthenticated();
+      allow update, delete: if isAdmin();
+    }
+  }
+}

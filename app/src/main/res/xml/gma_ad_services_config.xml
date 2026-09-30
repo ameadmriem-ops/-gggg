@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ad-services-config>
+    <attribution allowAdAttribution="false" />
+    <custom-audiences allowCustomAudience="false" />
+    <protected-signals allowProtectedSignals="false" />
+    <topics allowTopics="false" />
+</ad-services-config>
