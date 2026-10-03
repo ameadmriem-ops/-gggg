@@ -15,8 +15,15 @@ import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
 import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.auth.FirebaseAuthUserCollisionException
 import com.google.firebase.auth.FirebaseAuthWeakPasswordException
+import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.firestore.FirebaseFirestore
+import androidx.credentials.CredentialManager
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -390,6 +397,119 @@ class AuthManager(
         }
     }
 
+    /**
+     * Real Google Sign-In using AndroidX Credential Manager and Firebase Authentication.
+     * Authenticates verified Google Account identity and enforces Admin status for ameadmriem@gmail.com.
+     */
+    suspend fun signInWithGoogle(activityContext: Context): Result<UserEntity> {
+        return try {
+            val credentialManager = CredentialManager.create(activityContext)
+
+            val googleIdOption = GetGoogleIdOption.Builder()
+                .setFilterByAuthorizedAccounts(false)
+                .setServerClientId("638168428038-vd9o7vj74p19m0l116c4fom0q2v1.apps.googleusercontent.com")
+                .setAutoSelectEnabled(false)
+                .build()
+
+            val request = GetCredentialRequest.Builder()
+                .addCredentialOption(googleIdOption)
+                .build()
+
+            val response = credentialManager.getCredential(
+                request = request,
+                context = activityContext
+            )
+
+            val credential = response.credential
+            val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+            val idToken = googleIdTokenCredential.idToken
+
+            val firebaseAuthCredential = GoogleAuthProvider.getCredential(idToken, null)
+            val authResult = auth.signInWithCredential(firebaseAuthCredential).awaitTask()
+            val firebaseUser = authResult.user ?: throw Exception("تعذر التحقق من حساب Google في Firebase")
+
+            val uid = firebaseUser.uid
+            val verifiedEmail = firebaseUser.email?.trim() ?: ""
+            val isVerifiedAdmin = resolveAdminStatus(firebaseUser)
+
+            var user = dao.getUserByIdDirect(uid)
+            try {
+                val doc = firestore.collection("users").document(uid).get().awaitTask()
+                if (doc.exists()) {
+                    user = UserEntity(
+                        id = uid,
+                        username = doc.getString("username") ?: verifiedEmail.substringBefore("@"),
+                        fullName = doc.getString("fullName") ?: firebaseUser.displayName ?: if (isVerifiedAdmin) "مشرف المنصة الرئيسي" else "مستخدم Google",
+                        email = verifiedEmail,
+                        passwordHash = "",
+                        avatarUrl = doc.getString("avatarUrl") ?: firebaseUser.photoUrl?.toString() ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80",
+                        bio = doc.getString("bio") ?: if (isVerifiedAdmin) "الحساب الرسمي لإدارة منصة VidoMix 🛡️" else "مرحباً بك في قناتي على VidoMix 🎬",
+                        followersCount = (doc.getLong("followersCount") ?: if (isVerifiedAdmin) 15000L else 0L).toInt(),
+                        followingCount = (doc.getLong("followingCount") ?: 0L).toInt(),
+                        isVerified = isVerifiedAdmin || (doc.getBoolean("isVerified") ?: false),
+                        isAdmin = isVerifiedAdmin,
+                        createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w("AuthManager", "Firestore sync note: ${e.message}")
+            }
+
+            if (user == null) {
+                user = UserEntity(
+                    id = uid,
+                    username = verifiedEmail.substringBefore("@").ifBlank { "google_user_${uid.take(5)}" },
+                    fullName = firebaseUser.displayName ?: if (isVerifiedAdmin) "مشرف المنصة الرئيسي" else "مستخدم Google",
+                    email = verifiedEmail,
+                    passwordHash = "",
+                    avatarUrl = firebaseUser.photoUrl?.toString() ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80",
+                    bio = if (isVerifiedAdmin) "الحساب الرسمي لإدارة منصة VidoMix 🛡️" else "مرحباً بك في قناتي على VidoMix 🎬",
+                    followersCount = if (isVerifiedAdmin) 15000 else 0,
+                    followingCount = 0,
+                    isVerified = isVerifiedAdmin,
+                    isAdmin = isVerifiedAdmin,
+                    createdAt = System.currentTimeMillis()
+                )
+
+                // Save to Firestore
+                try {
+                    val userData = hashMapOf<String, Any>(
+                        "id" to uid,
+                        "username" to user.username,
+                        "fullName" to user.fullName,
+                        "email" to verifiedEmail,
+                        "role" to (if (isVerifiedAdmin) "admin" else "user"),
+                        "isAdmin" to isVerifiedAdmin,
+                        "isVerified" to isVerifiedAdmin,
+                        "avatarUrl" to user.avatarUrl,
+                        "bio" to user.bio,
+                        "createdAt" to System.currentTimeMillis()
+                    )
+                    firestore.collection("users").document(uid).set(userData).awaitTask()
+                } catch (e: Exception) {
+                    Log.w("AuthManager", "Firestore save note: ${e.message}")
+                }
+            } else {
+                user = user.copy(
+                    isAdmin = isVerifiedAdmin,
+                    isVerified = if (isVerifiedAdmin) true else user.isVerified
+                )
+            }
+
+            dao.insertUser(user)
+            _currentUser.value = user
+            Result.success(user)
+        } catch (e: GetCredentialCancellationException) {
+            Result.failure(Exception("تم إلغاء تسجيل الدخول عبر Google"))
+        } catch (e: GetCredentialException) {
+            Log.w("AuthManager", "CredentialManager exception: ${e.message}")
+            Result.failure(Exception("تعذر استرداد حساب Google من الجهاز: ${e.message}"))
+        } catch (e: Exception) {
+            Log.w("AuthManager", "Google Sign-In error: ${e.message}")
+            Result.failure(Exception(e.localizedMessage ?: "فشل تسجيل الدخول عبر Google"))
+        }
+    }
+
     suspend fun sendPasswordReset(email: String): Result<Unit> {
         val trimmed = email.trim()
         if (trimmed.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(trimmed).matches()) {
@@ -468,5 +588,59 @@ class AuthManager(
 
     fun setCurrentUserDirect(user: UserEntity) {
         _currentUser.value = user
+    }
+
+    suspend fun refreshCurrentUser() {
+        val current = _currentUser.value ?: return
+        val fresh = dao.getUserByIdDirect(current.id)
+        if (fresh != null) {
+            _currentUser.value = fresh
+        }
+    }
+
+    fun getFirestoreInstance(): FirebaseFirestore {
+        ensureFirebaseInitialized()
+        return firestore
+    }
+
+    /**
+     * Checks eligibility to start a live stream directly against Firestore
+     * verifying the 50 followers rule and account status.
+     */
+    suspend fun checkLiveEligibilityFromFirestore(userId: String): Result<Boolean> {
+        ensureFirebaseInitialized()
+        try {
+            val userDoc = firestore.collection("users").document(userId).get().awaitTask()
+            if (userDoc.exists()) {
+                val accountStatus = userDoc.getString("accountStatus") ?: "ACTIVE"
+                if (accountStatus.equals("BANNED", ignoreCase = true) || accountStatus.equals("RESTRICTED", ignoreCase = true)) {
+                    return Result.failure(Exception("الحساب محظور أو موقوف ولا يمكنه بدء بث مباشر."))
+                }
+                val followersCount = (userDoc.getLong("followersCount") ?: 0L).toInt()
+                // Synchronize with local Room database
+                val localUser = dao.getUserByIdDirect(userId)
+                if (localUser != null) {
+                    dao.insertUser(localUser.copy(followersCount = followersCount, accountStatus = accountStatus))
+                }
+                if (followersCount < 50) {
+                    return Result.failure(Exception("تحتاج إلى 50 متابعًا لبدء بث مباشر."))
+                }
+                return Result.success(true)
+            }
+        } catch (e: Exception) {
+            Log.w("AuthManager", "Firestore live eligibility check fallback to local: ${e.message}")
+        }
+
+        // Fallback to local Room database verification
+        val localUser = dao.getUserByIdDirect(userId) ?: return Result.failure(Exception("المستخدم غير موجود"))
+        if (localUser.accountStatus.equals("BANNED", ignoreCase = true) || localUser.accountStatus.equals("RESTRICTED", ignoreCase = true)) {
+            return Result.failure(Exception("الحساب محظور أو موقوف ولا يمكنه بدء بث مباشر."))
+        }
+        val channel = dao.getChannelByUserIdDirect(userId)
+        val followerCount = maxOf(localUser.followersCount, channel?.subscriberCount ?: 0)
+        if (followerCount < 50) {
+            return Result.failure(Exception("تحتاج إلى 50 متابعًا لبدء بث مباشر."))
+        }
+        return Result.success(true)
     }
 }

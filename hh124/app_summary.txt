@@ -1,0 +1,25 @@
+# VidoMix - Application Build & Optimization Manifest
+Directory: hh124
+
+## نظرة عامة على التطبيق (Application Overview)
+- اسم التطبيق: VidoMix
+- الحزمة: com.aistudio.vidomix.vpxqra
+- بنية التطبيق: Kotlin + Jetpack Compose + Room Database + Media3 ExoPlayer + Firebase Firestore & Auth
+- نظام البث المباشر: مستوحى من TikTok Live مع واجهة عمودية كاملة، هدايا العملات، وتحقق شرط الـ 50 متابعاً عبر Firestore.
+
+## تحسينات الأداء واستقرار النظام ومقاومة الانهيار (Crash-Resistance & Stability Optimizations)
+1. **شبكة الأمان الشاملة (Global Safety Net)**:
+   - تم تثبيت `AppCrashReporter.installGlobalHandler()` داخل `MainActivity.onCreate()` لاعتراض ومعالجة الأخطاء غير المتوقعة ومنع توقف التطبيق أو الخروج المفاجئ.
+   - عزل أخطاء الخيوط (Threads) وحماية واجهة المستخدم من التجمد.
+
+2. **استقرار مشغل الفيديو (ExoPlayer Resilience)**:
+   - تفعيل `enableDecoderFallback(true)` لاختيار أجهزة فك التشفير البديلة تلقائياً في حال فشل وحدة معالجة الفيديو الأساسية.
+   - ضبط مهلة الاتصال والشبكة (15 ثانية) وإعادة المحاولة التلقائية حتى 3 مرات مع التراجع الأسي (Exponential Backoff).
+   - إيقاف التشغيل واستعادة الموارد في دورة حياة المكونات (`ON_PAUSE`, `ON_STOP`) لتجنب تسريب الذاكرة (Memory Leaks).
+
+3. **حماية التخزين المحلي وقاعدة بيانات Room**:
+   - تفعيل التحديث التلقائي والتهجير الآمن `fallbackToDestructiveMigration()` لمنع تعطل التطبيق عند ترقية المخطط.
+   - عمليات التعديل والإدخال والحذف تتم داخل Coroutines على خيوط `Dispatchers.IO` حصرياً لتجنب تجميد خيط الواجهة الرئيسي (UI Thread).
+
+4. **التحقق السحابي الآمن (Firestore 50 Followers Rule)**:
+   - التحقق من شرط 50 متابعًا مباشرة عبر Firestore السحابي قبل بدء البث، مع آلية احتياطية محلية ذكية تضمن عدم توقف التطبيق عند ضعف أو انقطاع الاتصال بالإنترنت.

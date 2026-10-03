@@ -11,5 +11,7 @@ data class CommentEntity(
     val parentCommentId: String? = null,
     val content: String,
     val likesCount: Int = 0,
+    val moderationStatus: String = "APPROVED", // "APPROVED", "PENDING", "REMOVED"
+    val moderationReason: String? = null,
     val timestamp: Long = System.currentTimeMillis()
 )

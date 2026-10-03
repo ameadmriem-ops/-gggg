@@ -39,6 +39,7 @@ import com.example.ui.theme.VidoCoral
 import com.example.ui.theme.VidoCyan
 import com.example.ui.theme.VidoPurple
 import com.example.ui.viewmodel.VidoMixViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun VideoDetailScreen(
@@ -68,6 +69,9 @@ fun VideoDetailScreen(
     var isFullscreen by remember { mutableStateOf(false) }
     var showCommentsSheet by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
+    var showMoreOptionsSheet by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     // Prepare and play the video
     LaunchedEffect(videoId) {
@@ -438,24 +442,24 @@ fun VideoDetailScreen(
                             )
                         }
 
-                        // Report
+                        // More Options (Three dots ⋮)
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
-                                .clickable { showReportDialog = true }
+                                .clickable { showMoreOptionsSheet = true }
                                 .padding(8.dp)
-                                .testTag("detail_report_button")
+                                .testTag("detail_more_options_button")
                         ) {
                             Icon(
-                                imageVector = Icons.Outlined.Flag,
-                                contentDescription = "إبلاغ",
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "خيارات إضافية",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(22.dp)
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "إبلاغ",
+                                text = "المزيد",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -544,11 +548,69 @@ fun VideoDetailScreen(
                         onChannelClick = onNavigateToChannel,
                         onSaveToggle = { viewModel.toggleSaveVideoById(it) },
                         onShareClick = { /* Handle share */ },
-                        onReportClick = { showReportDialog = true }
+                        onReportClick = { showReportDialog = true },
+                        currentUser = currentUser
                     )
                 }
             }
         }
+
+        // Snackbar Host for feedback
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .padding(bottom = 16.dp)
+        )
+    }
+
+    // Video More Menu Bottom Sheet
+    if (showMoreOptionsSheet) {
+        VideoMoreMenuBottomSheet(
+            video = video,
+            channel = activeChannel,
+            currentUser = currentUser,
+            isSaved = isSaved,
+            onDismiss = { showMoreOptionsSheet = false },
+            onNotInterested = {
+                viewModel.markVideoNotInterested(video) { msg ->
+                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                }
+            },
+            onBlockCreator = { creatorUserId ->
+                viewModel.blockCreator(creatorUserId) { _, msg ->
+                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                }
+            },
+            onReport = { showReportDialog = true },
+            onSaveToggle = {
+                viewModel.toggleSaveActiveVideo()
+                scope.launch { snackbarHostState.showSnackbar(if (isSaved) "تمت إزالة الفيديو من المحفوظات" else "تم حفظ الفيديو في المحفوظات") }
+            },
+            onDislikeCategory = { cat ->
+                viewModel.dislikeCategory(cat) { msg ->
+                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                }
+            },
+            onDownload = {
+                scope.launch { snackbarHostState.showSnackbar("جاري بدء تنزيل الفيديو للمشاهدة بدون إنترنت...") }
+            },
+            onEditVideo = { t, d, c, tg ->
+                viewModel.editVideoDetails(video.id, t, d, c, tg) { _, _ ->
+                    scope.launch { snackbarHostState.showSnackbar("تم حفظ التعديلات بنجاح") }
+                }
+            },
+            onToggleVisibility = { pub ->
+                viewModel.toggleVideoVisibility(video.id, pub) { msg ->
+                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                }
+            },
+            onDeleteVideo = {
+                viewModel.deleteVideo(video.id)
+                onNavigateBack()
+            },
+            onManageComments = { showCommentsSheet = true }
+        )
     }
 
     // Comments Sheet
@@ -566,12 +628,13 @@ fun VideoDetailScreen(
 
     // Report Dialog
     if (showReportDialog) {
-        ReportDialog(
-            targetType = "فيديو",
-            onDismiss = { showReportDialog = false },
+        ReportContentDialog(
+            targetTitle = video.title,
+            reportType = "VIDEO",
+            onDismissRequest = { showReportDialog = false },
             onSubmitReport = { reason, details ->
                 viewModel.submitReport("VIDEO", video.id, reason, details)
-                showReportDialog = false
+                scope.launch { snackbarHostState.showSnackbar("تم إرسال البلاغ بنجاح") }
             }
         )
     }

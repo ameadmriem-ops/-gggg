@@ -65,6 +65,10 @@ data class PlatformSettingsEntity(
     @PrimaryKey val key: String = "global",
     val platformSharePercent: Double = 60.0,
     val creatorSharePercent: Double = 40.0,
+    val livePlatformSharePercent: Double = 30.0, // 30% platform
+    val liveCreatorSharePercent: Double = 70.0,  // 70% streamer
+    val minLiveFollowersRequired: Int = 50,      // 50 followers rule
+    val coinToUsdRate: Double = 0.01,            // 1 coin = $0.01
     val shortsAdInterval: Int = 3, // Show ad every N shorts
     val midrollEnabled: Boolean = true,
     val minPayoutThreshold: Double = 50.0

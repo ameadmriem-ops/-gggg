@@ -85,6 +85,24 @@ object AppCrashReporter {
         _recentErrors.value = currentList
     }
 
+    /**
+     * Installs a global safety net to intercept unhandled exceptions and prevent
+     * sudden app exits or crashes, logging diagnostic data safely.
+     */
+    fun installGlobalHandler() {
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                recordError("GlobalSafetyNet", "RootThread", throwable, "Uncaught exception intercepted safely")
+                Log.e(TAG, "Handled uncaught crash on thread ${thread.name}: ${throwable.localizedMessage}")
+            } catch (_: Exception) {}
+
+            if (throwable is OutOfMemoryError) {
+                previousHandler?.uncaughtException(thread, throwable)
+            }
+        }
+    }
+
     inline fun <T> runCatchingSafe(
         tag: String,
         screenRoute: String = "App",

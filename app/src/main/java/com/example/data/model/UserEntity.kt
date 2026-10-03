@@ -16,5 +16,10 @@ data class UserEntity(
     val followingCount: Int = 0,
     val isVerified: Boolean = false,
     val isAdmin: Boolean = false,
+    val warningCount: Int = 0, // 0 to 5 strikes
+    val accountStatus: String = "ACTIVE", // "ACTIVE", "RESTRICTED", "TERMINATED", "BANNED"
+    val coinsBalance: Long = 100L,
+    val liveRole: String = "USER", // "USER", "STREAMER", "MODERATOR", "ADMIN"
+    val liveNotificationsEnabled: Boolean = true,
     val createdAt: Long = System.currentTimeMillis()
 )

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ElectricBolt
@@ -31,6 +32,7 @@ import com.example.ui.components.*
 import com.example.ui.theme.VidoCoral
 import com.example.ui.theme.VidoPurple
 import com.example.ui.viewmodel.VidoMixViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(
@@ -41,6 +43,8 @@ fun HomeScreen(
     onSearchClick: () -> Unit,
     onNotificationsClick: () -> Unit,
     onProfileClick: () -> Unit,
+    onNavigateToLive: (String) -> Unit = {},
+    onStartLiveClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
@@ -48,6 +52,7 @@ fun HomeScreen(
     val trendingVideos by viewModel.trendingVideos.collectAsStateWithLifecycle()
     val shortsList by viewModel.shortsList.collectAsStateWithLifecycle()
     val channels by viewModel.allChannels.collectAsStateWithLifecycle()
+    val activeLiveStreams by viewModel.activeLiveStreams.collectAsStateWithLifecycle()
     val selectedCategory by viewModel.selectedCategory.collectAsStateWithLifecycle()
     val notifications by viewModel.notifications.collectAsStateWithLifecycle()
     val savedVideos by viewModel.savedVideos.collectAsStateWithLifecycle()
@@ -56,7 +61,14 @@ fun HomeScreen(
     val savedVideoIds = remember(savedVideos) { savedVideos.map { it.id }.toSet() }
     val hasUnread = notifications.any { !it.isRead }
 
+    val filteredLiveStreams = remember(activeLiveStreams, selectedCategory) {
+        if (selectedCategory == "الكل") activeLiveStreams
+        else activeLiveStreams.filter { it.category == selectedCategory }
+    }
+
     var reportingVideoId by remember { mutableStateOf<String?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
@@ -65,9 +77,11 @@ fun HomeScreen(
                 onNotificationsClick = onNotificationsClick,
                 userAvatarUrl = currentUser?.avatarUrl,
                 onAvatarClick = onProfileClick,
-                hasUnreadNotifications = hasUnread
+                hasUnreadNotifications = hasUnread,
+                onLiveClick = onStartLiveClick
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         modifier = modifier.testTag("home_screen_scaffold")
     ) { innerPadding ->
         LazyColumn(
@@ -84,6 +98,55 @@ fun HomeScreen(
                     selectedCategory = selectedCategory,
                     onCategorySelected = { viewModel.selectedCategory.value = it }
                 )
+            }
+
+            // Live Streams Carousel Shelf (مباشر الآن)
+            if (filteredLiveStreams.isNotEmpty()) {
+                item {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFFE91E63))
+                                )
+                                Text(
+                                    text = "مباشر الآن (LIVE)",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold)
+                                )
+                            }
+                            TextButton(onClick = onStartLiveClick) {
+                                Text("بدء بث +", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        androidx.compose.foundation.lazy.LazyRow(
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(filteredLiveStreams, key = { it.id }) { stream ->
+                                LiveStreamCard(
+                                    stream = stream,
+                                    onClick = { onNavigateToLive(stream.id) }
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             // Featured Hero Banner (Top Trending Video)
@@ -184,9 +247,45 @@ fun HomeScreen(
                         channel = channel,
                         onVideoClick = onNavigateToVideo,
                         onChannelClick = onNavigateToChannel,
-                        onSaveToggle = { viewModel.toggleSaveVideoById(it) },
-                        onShareClick = { /* Handle share */ },
+                        onSaveToggle = {
+                            viewModel.toggleSaveVideoById(it)
+                            scope.launch { snackbarHostState.showSnackbar(if (savedVideoIds.contains(video.id)) "تمت إزالة الفيديو من المحفوظات" else "تم حفظ الفيديو في المحفوظات") }
+                        },
+                        onShareClick = { /* Handled in VideoCard */ },
                         onReportClick = { reportingVideoId = it },
+                        onNotInterested = {
+                            viewModel.markVideoNotInterested(video) { msg ->
+                                scope.launch { snackbarHostState.showSnackbar(msg) }
+                            }
+                        },
+                        onBlockCreator = { creatorId ->
+                            viewModel.blockCreator(creatorId) { _, msg ->
+                                scope.launch { snackbarHostState.showSnackbar(msg) }
+                            }
+                        },
+                        onDislikeCategory = { cat ->
+                            viewModel.dislikeCategory(cat) { msg ->
+                                scope.launch { snackbarHostState.showSnackbar(msg) }
+                            }
+                        },
+                        onDownload = {
+                            scope.launch { snackbarHostState.showSnackbar("جاري بدء تنزيل الفيديو للمشاهدة بدون إنترنت...") }
+                        },
+                        onEditVideo = { t, d, c, tg ->
+                            viewModel.editVideoDetails(video.id, t, d, c, tg) { _, _ ->
+                                scope.launch { snackbarHostState.showSnackbar("تم حفظ التعديلات بنجاح") }
+                            }
+                        },
+                        onToggleVisibility = { pub ->
+                            viewModel.toggleVideoVisibility(video.id, pub) { msg ->
+                                scope.launch { snackbarHostState.showSnackbar(msg) }
+                            }
+                        },
+                        onDeleteVideo = {
+                            viewModel.deleteVideo(video.id)
+                            scope.launch { snackbarHostState.showSnackbar("تم حذف الفيديو بنجاح") }
+                        },
+                        currentUser = currentUser,
                         isSaved = savedVideoIds.contains(video.id)
                     )
                 }
@@ -196,12 +295,15 @@ fun HomeScreen(
 
     // Report Dialog
     reportingVideoId?.let { videoId ->
-        ReportDialog(
-            targetType = "فيديو",
-            onDismiss = { reportingVideoId = null },
+        val video = homeVideos.find { it.id == videoId }
+        ReportContentDialog(
+            targetTitle = video?.title ?: "فيديو",
+            reportType = "VIDEO",
+            onDismissRequest = { reportingVideoId = null },
             onSubmitReport = { reason, details ->
                 viewModel.submitReport("VIDEO", videoId, reason, details)
                 reportingVideoId = null
+                scope.launch { snackbarHostState.showSnackbar("تم إرسال البلاغ بنجاح إلى فريق الإشراف") }
             }
         )
     }

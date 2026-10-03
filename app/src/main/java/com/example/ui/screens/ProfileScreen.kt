@@ -31,6 +31,7 @@ import com.example.ui.components.VideoCard
 import com.example.ui.components.formatViews
 import com.example.ui.theme.VidoCoral
 import com.example.ui.theme.VidoCyan
+import com.example.ui.theme.VidoGold
 import com.example.ui.theme.VidoPurple
 import com.example.ui.viewmodel.VidoMixViewModel
 import kotlinx.coroutines.launch
@@ -46,6 +47,8 @@ fun ProfileScreen(
     onNavigateToMonetization: () -> Unit = {},
     onNavigateToStudio: () -> Unit = {},
     onNavigateToPayments: () -> Unit = {},
+    onNavigateToWallet: () -> Unit = {},
+    onNavigateToLiveSetup: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
@@ -305,6 +308,36 @@ fun ProfileScreen(
                                 Text("الربح 💰", fontSize = 12.sp, color = Color.White)
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Wallet & Live Stream Quick Shortcuts
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = onNavigateToWallet,
+                                shape = RoundedCornerShape(20.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("profile_wallet_button"),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF673AB7))
+                            ) {
+                                Text("🪙 المحفظة (${user.coinsBalance})", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            Button(
+                                onClick = onNavigateToLiveSetup,
+                                shape = RoundedCornerShape(20.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("profile_live_button"),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE91E63))
+                            ) {
+                                Text("🔴 بدء بث مباشر", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                            }
+                        }
                     }
                 }
             }
@@ -349,8 +382,12 @@ fun ProfileScreen(
                                 VideoCard(
                                     video = video,
                                     channel = channel,
+                                    currentUser = user,
                                     onVideoClick = onNavigateToVideo,
-                                    onChannelClick = onNavigateToChannel
+                                    onChannelClick = onNavigateToChannel,
+                                    onEditVideo = { t, d, c, tg -> viewModel.editVideoDetails(video.id, t, d, c, tg) },
+                                    onToggleVisibility = { pub -> viewModel.toggleVideoVisibility(video.id, pub) },
+                                    onDeleteVideo = { viewModel.deleteVideo(video.id) }
                                 )
                             }
                         }
@@ -370,6 +407,7 @@ fun ProfileScreen(
                                 VideoCard(
                                     video = video,
                                     channel = channel,
+                                    currentUser = user,
                                     onVideoClick = onNavigateToVideo,
                                     onChannelClick = onNavigateToChannel,
                                     isSaved = true,
@@ -406,6 +444,7 @@ fun ProfileScreen(
                                 VideoCard(
                                     video = video,
                                     channel = channel,
+                                    currentUser = user,
                                     onVideoClick = onNavigateToVideo,
                                     onChannelClick = onNavigateToChannel
                                 )
@@ -498,6 +537,35 @@ fun ProfileScreen(
                         onCheckedChange = { viewModel.toggleDarkMode() }
                     )
                 }
+
+                // Live Notifications Toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.LiveTv, contentDescription = null, tint = Color(0xFFE91E63))
+                        Text("إشعارات البث المباشر للقنوات")
+                    }
+                    Switch(
+                        checked = user.liveNotificationsEnabled,
+                        onCheckedChange = { coroutineScope.launch { viewModel.toggleLiveNotifications(it) } }
+                    )
+                }
+
+                ListItem(
+                    headlineContent = { Text("المحفظة والعملات (Wallet)") },
+                    supportingContent = { Text("شحن الرصيد وسجل الهدايا وأرباح البث") },
+                    leadingContent = { Icon(Icons.Default.Paid, contentDescription = null, tint = VidoGold) },
+                    modifier = Modifier.clickable {
+                        showSettingsSheet = false
+                        onNavigateToWallet()
+                    }
+                )
 
                 ListItem(
                     headlineContent = { Text("تحقيق الربح (Monetization)") },

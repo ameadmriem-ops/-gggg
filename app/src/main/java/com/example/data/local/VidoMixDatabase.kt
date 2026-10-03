@@ -18,13 +18,27 @@ import com.example.data.model.*
         WatchHistoryEntity::class,
         NotificationEntity::class,
         ReportEntity::class,
+        AppealEntity::class,
+        AuditLogEntity::class,
         SearchHistoryEntity::class,
         MonetizationProfileEntity::class,
         AdImpressionEntity::class,
         PayoutEntity::class,
-        PlatformSettingsEntity::class
+        PlatformSettingsEntity::class,
+        BlockedUserEntity::class,
+        NotInterestedEntity::class,
+        DislikedCategoryEntity::class,
+        LiveStreamEntity::class,
+        LiveCommentEntity::class,
+        LiveGiftEntity::class,
+        LiveGiftTransactionEntity::class,
+        CoinPackageEntity::class,
+        CoinPurchaseOrderEntity::class,
+        LiveMutedUserEntity::class,
+        LiveBannedViewerEntity::class,
+        LiveViewerSessionEntity::class
     ],
-    version = 3,
+    version = 6,
     exportSchema = false
 )
 abstract class VidoMixDatabase : RoomDatabase() {

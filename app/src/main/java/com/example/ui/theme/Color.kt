@@ -9,6 +9,8 @@ val VidoPurpleLight = Color(0xFFA78BFA)
 val VidoCoral = Color(0xFFF43F5E)
 val VidoCyan = Color(0xFF06B6D4)
 val VidoAmber = Color(0xFFF59E0B)
+val VidoGold = Color(0xFFFFD700)
+val VidoPink = Color(0xFFFF2D78)
 
 // Dark theme backgrounds
 val DarkBackground = Color(0xFF0B0914)

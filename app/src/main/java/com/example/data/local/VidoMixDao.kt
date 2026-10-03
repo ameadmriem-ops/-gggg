@@ -77,6 +77,9 @@ interface VidoMixDao {
     @Query("SELECT * FROM videos WHERE channelId = :channelId AND isShort = :isShort AND isPublic = 1 ORDER BY uploadTimestamp DESC")
     fun getVideosByChannel(channelId: String, isShort: Boolean): Flow<List<VideoEntity>>
 
+    @Query("SELECT * FROM videos WHERE channelId = :channelId ORDER BY uploadTimestamp DESC")
+    fun getAllVideosByChannel(channelId: String): Flow<List<VideoEntity>>
+
     @Query("SELECT * FROM videos WHERE title LIKE '%' || :query || '%' OR description LIKE '%' || :query || '%' OR tags LIKE '%' || :query || '%' ORDER BY viewsCount DESC")
     fun searchVideos(query: String): Flow<List<VideoEntity>>
 
@@ -114,6 +117,12 @@ interface VidoMixDao {
     @Query("DELETE FROM comments WHERE id = :id")
     suspend fun deleteComment(id: String)
 
+    @Query("SELECT * FROM comments WHERE id = :id LIMIT 1")
+    suspend fun getCommentByIdDirect(id: String): CommentEntity?
+
+    @Query("UPDATE comments SET moderationStatus = :status, moderationReason = :reason WHERE id = :commentId")
+    suspend fun updateCommentModeration(commentId: String, status: String, reason: String?)
+
     // --- Likes ---
     @Query("SELECT * FROM likes WHERE userId = :userId AND targetType = :targetType AND targetId = :targetId LIMIT 1")
     suspend fun getLike(userId: String, targetType: String, targetId: String): LikeEntity?
@@ -133,6 +142,9 @@ interface VidoMixDao {
 
     @Query("SELECT * FROM follows WHERE followerUserId = :followerUserId AND followedChannelId = :channelId LIMIT 1")
     suspend fun getFollow(followerUserId: String, channelId: String): FollowEntity?
+
+    @Query("SELECT * FROM follows WHERE followedChannelId = :channelId")
+    suspend fun getFollowersForChannelDirect(channelId: String): List<FollowEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFollow(follow: FollowEntity)
@@ -186,11 +198,53 @@ interface VidoMixDao {
     @Query("SELECT * FROM reports ORDER BY timestamp DESC")
     fun getAllReports(): Flow<List<ReportEntity>>
 
+    @Query("SELECT * FROM reports WHERE status = :status ORDER BY timestamp DESC")
+    fun getReportsByStatus(status: String): Flow<List<ReportEntity>>
+
+    @Query("SELECT * FROM reports WHERE id = :id LIMIT 1")
+    suspend fun getReportByIdDirect(id: String): ReportEntity?
+
+    @Query("SELECT COUNT(*) > 0 FROM reports WHERE reporterUserId = :reporterUserId AND targetId = :targetId")
+    suspend fun hasUserReportedContent(reporterUserId: String, targetId: String): Boolean
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertReport(report: ReportEntity)
 
-    @Query("UPDATE reports SET status = :status WHERE id = :id")
-    suspend fun updateReportStatus(id: String, status: String)
+    @Update
+    suspend fun updateReport(report: ReportEntity)
+
+    @Query("UPDATE reports SET status = :status, reviewedBy = :reviewedBy, reviewedAt = :reviewedAt, decision = :decision WHERE id = :id")
+    suspend fun updateReportDecision(id: String, status: String, reviewedBy: String, reviewedAt: Long, decision: String)
+
+    // --- Appeals ---
+    @Query("SELECT * FROM appeals ORDER BY timestamp DESC")
+    fun getAllAppeals(): Flow<List<AppealEntity>>
+
+    @Query("SELECT * FROM appeals WHERE userId = :userId ORDER BY timestamp DESC")
+    fun getAppealsForUser(userId: String): Flow<List<AppealEntity>>
+
+    @Query("SELECT * FROM appeals WHERE id = :id LIMIT 1")
+    suspend fun getAppealByIdDirect(id: String): AppealEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAppeal(appeal: AppealEntity)
+
+    @Update
+    suspend fun updateAppeal(appeal: AppealEntity)
+
+    // --- Audit Logs ---
+    @Query("SELECT * FROM audit_logs ORDER BY timestamp DESC")
+    fun getAllAuditLogs(): Flow<List<AuditLogEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAuditLog(log: AuditLogEntity)
+
+    // --- Content & User Moderation Updates ---
+    @Query("UPDATE users SET warningCount = :warningCount, accountStatus = :accountStatus WHERE id = :userId")
+    suspend fun updateUserWarningAndStatus(userId: String, warningCount: Int, accountStatus: String)
+
+    @Query("UPDATE videos SET moderationStatus = :status, moderationReason = :reason WHERE id = :videoId")
+    suspend fun updateVideoModeration(videoId: String, status: String, reason: String?)
 
     // --- Search History ---
     @Query("SELECT * FROM search_history WHERE userId = :userId ORDER BY timestamp DESC LIMIT :limit")
@@ -262,4 +316,203 @@ interface VidoMixDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPlatformSettings(settings: PlatformSettingsEntity)
+
+    // --- User Block & Preference Management ---
+    @Query("SELECT * FROM blocked_users WHERE userId = :userId")
+    fun getBlockedUsers(userId: String): Flow<List<BlockedUserEntity>>
+
+    @Query("SELECT * FROM blocked_users WHERE userId = :userId")
+    suspend fun getBlockedUsersDirect(userId: String): List<BlockedUserEntity>
+
+    @Query("SELECT COUNT(*) > 0 FROM blocked_users WHERE userId = :userId AND blockedUserId = :blockedUserId")
+    fun isUserBlocked(userId: String, blockedUserId: String): Flow<Boolean>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBlockedUser(blocked: BlockedUserEntity)
+
+    @Query("DELETE FROM blocked_users WHERE userId = :userId AND blockedUserId = :blockedUserId")
+    suspend fun deleteBlockedUser(userId: String, blockedUserId: String)
+
+    // --- Not Interested Videos ---
+    @Query("SELECT * FROM not_interested_videos WHERE userId = :userId")
+    fun getNotInterestedVideos(userId: String): Flow<List<NotInterestedEntity>>
+
+    @Query("SELECT * FROM not_interested_videos WHERE userId = :userId")
+    suspend fun getNotInterestedVideosDirect(userId: String): List<NotInterestedEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNotInterested(notInterested: NotInterestedEntity)
+
+    // --- Disliked Categories ---
+    @Query("SELECT * FROM disliked_categories WHERE userId = :userId")
+    fun getDislikedCategories(userId: String): Flow<List<DislikedCategoryEntity>>
+
+    @Query("SELECT * FROM disliked_categories WHERE userId = :userId")
+    suspend fun getDislikedCategoriesDirect(userId: String): List<DislikedCategoryEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDislikedCategory(item: DislikedCategoryEntity)
+
+    // --- Video Editing by Owner ---
+    @Query("UPDATE videos SET title = :title, description = :description, category = :category, tags = :tags WHERE id = :videoId")
+    suspend fun updateVideoDetails(videoId: String, title: String, description: String, category: String, tags: String)
+
+    @Query("UPDATE videos SET isPublic = :isPublic WHERE id = :videoId")
+    suspend fun updateVideoVisibility(videoId: String, isPublic: Boolean)
+
+    // --- Live Streams ---
+    @Query("SELECT * FROM live_streams WHERE status = 'LIVE' ORDER BY viewersCount DESC")
+    fun getActiveLiveStreams(): Flow<List<LiveStreamEntity>>
+
+    @Query("SELECT * FROM live_streams ORDER BY startedAt DESC")
+    fun getAllLiveStreams(): Flow<List<LiveStreamEntity>>
+
+    @Query("SELECT * FROM live_streams WHERE status = 'ENDED' ORDER BY startedAt DESC")
+    fun getEndedLiveStreams(): Flow<List<LiveStreamEntity>>
+
+    @Query("SELECT * FROM live_streams WHERE id = :id LIMIT 1")
+    fun getLiveStreamById(id: String): Flow<LiveStreamEntity?>
+
+    @Query("SELECT * FROM live_streams WHERE id = :id LIMIT 1")
+    suspend fun getLiveStreamByIdDirect(id: String): LiveStreamEntity?
+
+    @Query("SELECT * FROM live_streams WHERE hostUserId = :hostUserId AND status = 'LIVE' LIMIT 1")
+    suspend fun getActiveLiveStreamByHostDirect(hostUserId: String): LiveStreamEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLiveStream(stream: LiveStreamEntity)
+
+    @Update
+    suspend fun updateLiveStream(stream: LiveStreamEntity)
+
+    @Query("UPDATE live_streams SET status = :status, endedAt = :endedAt WHERE id = :id")
+    suspend fun updateLiveStreamStatus(id: String, status: String, endedAt: Long?)
+
+    @Query("UPDATE live_streams SET viewersCount = :viewers, peakViewers = :peak, likesCount = :likes, totalGiftsCount = :gifts, totalCoinsEarned = :coins WHERE id = :id")
+    suspend fun updateLiveStreamMetrics(id: String, viewers: Int, peak: Int, likes: Int, gifts: Int, coins: Long)
+
+    @Query("UPDATE live_streams SET pinnedCommentId = :commentId, pinnedCommentText = :text, pinnedCommentUser = :user WHERE id = :streamId")
+    suspend fun updateLiveStreamPinnedComment(streamId: String, commentId: String?, text: String?, user: String?)
+
+    // --- Live Comments ---
+    @Query("SELECT * FROM live_comments WHERE streamId = :streamId ORDER BY timestamp ASC")
+    fun getLiveCommentsForStream(streamId: String): Flow<List<LiveCommentEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLiveComment(comment: LiveCommentEntity)
+
+    @Query("DELETE FROM live_comments WHERE id = :commentId")
+    suspend fun deleteLiveComment(commentId: String)
+
+    @Query("UPDATE live_comments SET isPinned = :isPinned WHERE id = :commentId")
+    suspend fun updateLiveCommentPinned(commentId: String, isPinned: Boolean)
+
+    // --- Live Gifts & Transactions ---
+    @Query("SELECT * FROM live_gifts ORDER BY displayOrder ASC, coinPrice ASC")
+    fun getAllGifts(): Flow<List<LiveGiftEntity>>
+
+    @Query("SELECT * FROM live_gifts WHERE isEnabled = 1 ORDER BY displayOrder ASC, coinPrice ASC")
+    fun getActiveGifts(): Flow<List<LiveGiftEntity>>
+
+    @Query("SELECT * FROM live_gifts")
+    suspend fun getAllGiftsDirect(): List<LiveGiftEntity>
+
+    @Query("SELECT * FROM live_gifts WHERE id = :id LIMIT 1")
+    suspend fun getGiftByIdDirect(id: String): LiveGiftEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertGift(gift: LiveGiftEntity)
+
+    @Update
+    suspend fun updateGift(gift: LiveGiftEntity)
+
+    @Query("DELETE FROM live_gifts WHERE id = :id")
+    suspend fun deleteGift(id: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertGiftTransaction(transaction: LiveGiftTransactionEntity)
+
+    @Query("SELECT * FROM live_gift_transactions WHERE streamId = :streamId ORDER BY timestamp DESC")
+    fun getGiftTransactionsForStream(streamId: String): Flow<List<LiveGiftTransactionEntity>>
+
+    @Query("SELECT * FROM live_gift_transactions WHERE senderUserId = :userId ORDER BY timestamp DESC")
+    fun getGiftTransactionsSentByUser(userId: String): Flow<List<LiveGiftTransactionEntity>>
+
+    @Query("SELECT * FROM live_gift_transactions WHERE hostUserId = :hostUserId ORDER BY timestamp DESC")
+    fun getGiftTransactionsReceivedByUser(hostUserId: String): Flow<List<LiveGiftTransactionEntity>>
+
+    @Query("SELECT * FROM live_gift_transactions ORDER BY timestamp DESC")
+    fun getAllGiftTransactions(): Flow<List<LiveGiftTransactionEntity>>
+
+    // --- Coin Packages & Orders ---
+    @Query("SELECT * FROM coin_packages ORDER BY priceUsd ASC")
+    fun getAllCoinPackages(): Flow<List<CoinPackageEntity>>
+
+    @Query("SELECT * FROM coin_packages WHERE isEnabled = 1 ORDER BY priceUsd ASC")
+    fun getActiveCoinPackages(): Flow<List<CoinPackageEntity>>
+
+    @Query("SELECT * FROM coin_packages")
+    suspend fun getAllCoinPackagesDirect(): List<CoinPackageEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCoinPackage(pkg: CoinPackageEntity)
+
+    @Update
+    suspend fun updateCoinPackage(pkg: CoinPackageEntity)
+
+    @Query("DELETE FROM coin_packages WHERE id = :id")
+    suspend fun deleteCoinPackage(id: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCoinPurchaseOrder(order: CoinPurchaseOrderEntity)
+
+    @Query("SELECT * FROM coin_purchase_orders WHERE userId = :userId ORDER BY timestamp DESC")
+    fun getUserPurchaseOrders(userId: String): Flow<List<CoinPurchaseOrderEntity>>
+
+    @Query("SELECT * FROM coin_purchase_orders ORDER BY timestamp DESC")
+    fun getAllPurchaseOrders(): Flow<List<CoinPurchaseOrderEntity>>
+
+    @Query("SELECT COUNT(*) > 0 FROM coin_purchase_orders WHERE id = :orderId")
+    suspend fun hasPurchaseOrder(orderId: String): Boolean
+
+    // --- User Coins Balance ---
+    @Query("UPDATE users SET coinsBalance = :newBalance WHERE id = :userId")
+    suspend fun updateUserCoinsBalance(userId: String, newBalance: Long)
+
+    @Query("SELECT coinsBalance FROM users WHERE id = :userId LIMIT 1")
+    suspend fun getUserCoinsBalanceDirect(userId: String): Long?
+
+    // --- Live Stream Moderation: Mute, Ban, Viewers ---
+    @Query("SELECT * FROM live_muted_users WHERE streamId = :streamId")
+    fun getMutedUsersForStream(streamId: String): Flow<List<LiveMutedUserEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertMutedUser(muted: LiveMutedUserEntity)
+
+    @Query("DELETE FROM live_muted_users WHERE streamId = :streamId AND userId = :userId")
+    suspend fun deleteMutedUser(streamId: String, userId: String)
+
+    @Query("SELECT COUNT(*) > 0 FROM live_muted_users WHERE streamId = :streamId AND userId = :userId")
+    suspend fun isUserMutedInStreamDirect(streamId: String, userId: String): Boolean
+
+    @Query("SELECT * FROM live_banned_viewers WHERE streamId = :streamId")
+    fun getBannedViewersForStream(streamId: String): Flow<List<LiveBannedViewerEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBannedViewer(banned: LiveBannedViewerEntity)
+
+    @Query("SELECT COUNT(*) > 0 FROM live_banned_viewers WHERE streamId = :streamId AND userId = :userId")
+    suspend fun isUserBannedFromStreamDirect(streamId: String, userId: String): Boolean
+
+    @Query("SELECT * FROM live_viewer_sessions WHERE streamId = :streamId ORDER BY joinedAt DESC")
+    fun getViewerSessions(streamId: String): Flow<List<LiveViewerSessionEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertViewerSession(session: LiveViewerSessionEntity)
+
+    @Query("DELETE FROM live_viewer_sessions WHERE streamId = :streamId AND userId = :userId")
+    suspend fun removeViewerSession(streamId: String, userId: String)
+
+    @Query("DELETE FROM live_viewer_sessions WHERE streamId = :streamId")
+    suspend fun clearViewerSessions(streamId: String)
 }

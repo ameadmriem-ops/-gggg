@@ -258,28 +258,67 @@ class VidoMixRepository(
     suspend fun markNotificationAsRead(id: String) = dao.markNotificationAsRead(id)
     suspend fun clearNotifications(userId: String) = dao.clearNotifications(userId)
 
-    // --- Reports ---
-    fun getAllReports(): Flow<List<ReportEntity>> = dao.getAllReports()
-    suspend fun submitReport(
-        reporterUserId: String,
-        reportType: String,
-        targetId: String,
-        reason: String,
-        details: String
-    ) {
-        val report = ReportEntity(
-            id = "rep_" + UUID.randomUUID().toString().take(8),
-            reporterUserId = reporterUserId,
-            reportType = reportType,
-            targetId = targetId,
-            reason = reason,
-            details = details.trim()
+    // --- Publish Content with Auto-Moderation ---
+    suspend fun publishVideo(
+        channelId: String,
+        title: String,
+        description: String,
+        videoUrl: String,
+        thumbnailUrl: String,
+        durationSeconds: Int,
+        category: String,
+        tags: String,
+        isShort: Boolean,
+        soundTrackTitle: String = "الصوت الأصلي - VidoMix"
+    ): Result<VideoEntity> {
+        val inspection = com.example.core.ContentModerationEngine.inspectContent(
+            title = title,
+            description = description,
+            tags = tags,
+            mediaUrl = videoUrl
         )
-        dao.insertReport(report)
-    }
 
-    suspend fun updateReportStatus(reportId: String, status: String) {
-        dao.updateReportStatus(reportId, status)
+        if (inspection.status == "REJECTED") {
+            return Result.failure(Exception(inspection.explanation))
+        }
+
+        val video = VideoEntity(
+            id = (if (isShort) "short_" else "vid_") + UUID.randomUUID().toString().take(8),
+            channelId = channelId,
+            title = title.trim(),
+            description = description.trim(),
+            videoUrl = videoUrl,
+            thumbnailUrl = thumbnailUrl,
+            durationSeconds = durationSeconds,
+            category = category,
+            tags = tags,
+            isShort = isShort,
+            isPublic = true,
+            uploadTimestamp = System.currentTimeMillis(),
+            soundTrackTitle = soundTrackTitle,
+            moderationStatus = inspection.status,
+            moderationReason = inspection.violationCategory
+        )
+
+        dao.insertVideo(video)
+
+        // If flagged as UNDER_REVIEW, create an internal review report
+        if (inspection.status == "UNDER_REVIEW") {
+            val chan = dao.getChannelByIdDirect(channelId)
+            val autoReport = ReportEntity(
+                id = "rep_auto_" + UUID.randomUUID().toString().take(8),
+                reporterUserId = "SYSTEM_MODERATION",
+                reportedUserId = chan?.userId ?: "",
+                targetId = video.id,
+                reportType = if (isShort) "SHORT" else "VIDEO",
+                reason = inspection.violationCategory ?: "مراجعة تلقائية للمحتوى المشبوه",
+                details = inspection.explanation,
+                status = "PENDING"
+            )
+            dao.insertReport(autoReport)
+        }
+
+        return Result.success(video)
     }
 
     // --- Admin / Moderation ---
@@ -503,4 +542,772 @@ class VidoMixRepository(
     fun getFlaggedImpressions(): Flow<List<AdImpressionEntity>> = dao.getFlaggedImpressions()
     fun getRecentImpressions(limit: Int = 100): Flow<List<AdImpressionEntity>> = dao.getRecentImpressions(limit)
     fun getImpressionsForCreator(creatorId: String): Flow<List<AdImpressionEntity>> = dao.getImpressionsForCreator(creatorId)
+
+    // --- Content Moderation & Reporting System ---
+    fun getAllReports(): Flow<List<ReportEntity>> = dao.getAllReports()
+    fun getReportsByStatus(status: String): Flow<List<ReportEntity>> = dao.getReportsByStatus(status)
+    fun getAllAppeals(): Flow<List<AppealEntity>> = dao.getAllAppeals()
+    fun getAppealsForUser(userId: String): Flow<List<AppealEntity>> = dao.getAppealsForUser(userId)
+    fun getAllAuditLogs(): Flow<List<AuditLogEntity>> = dao.getAllAuditLogs()
+
+    suspend fun submitReport(
+        reporterUserId: String,
+        targetId: String,
+        reportType: String,
+        reason: String,
+        details: String
+    ): Result<ReportEntity> {
+        if (dao.hasUserReportedContent(reporterUserId, targetId)) {
+            return Result.failure(Exception("لقد قمت بالإبلاغ عن هذا المحتوى مسبقاً، وهو قيد المراجعة لدى فريق الإدارة."))
+        }
+
+        // Determine reported creator/user
+        var reportedUserId = ""
+        when (reportType) {
+            "VIDEO", "SHORT" -> {
+                val vid = dao.getVideoByIdDirect(targetId)
+                if (vid != null) {
+                    val chan = dao.getChannelByIdDirect(vid.channelId)
+                    reportedUserId = chan?.userId ?: ""
+                }
+            }
+            "COMMENT" -> {
+                val comm = dao.getCommentByIdDirect(targetId)
+                reportedUserId = comm?.userId ?: ""
+            }
+            "USER" -> {
+                reportedUserId = targetId
+            }
+        }
+
+        val report = ReportEntity(
+            id = "rep_" + UUID.randomUUID().toString().take(10),
+            reporterUserId = reporterUserId,
+            reportedUserId = reportedUserId,
+            targetId = targetId,
+            reportType = reportType,
+            reason = reason,
+            details = details.trim(),
+            status = "PENDING"
+        )
+        dao.insertReport(report)
+        return Result.success(report)
+    }
+
+    suspend fun confirmViolation(
+        reportId: String,
+        adminId: String,
+        violationCategory: String,
+        takeDownContent: Boolean = true
+    ): Result<Unit> {
+        val report = dao.getReportByIdDirect(reportId)
+            ?: return Result.failure(Exception("البلاغ غير موجود"))
+
+        // 1. Mark report as CONFIRMED
+        val updatedReport = report.copy(
+            status = "CONFIRMED",
+            reviewedBy = adminId,
+            reviewedAt = System.currentTimeMillis(),
+            decision = "CONFIRMED: $violationCategory"
+        )
+        dao.updateReport(updatedReport)
+
+        // 2. Increment strike count for the creator
+        val creator = if (report.reportedUserId.isNotBlank()) dao.getUserByIdDirect(report.reportedUserId) else null
+        var newStrike = 1
+        var newStatus = "ACTIVE"
+
+        if (creator != null) {
+            newStrike = (creator.warningCount + 1).coerceAtMost(5)
+            newStatus = if (newStrike >= 5) "TERMINATED" else if (newStrike >= 3) "RESTRICTED" else "ACTIVE"
+            dao.updateUserWarningAndStatus(creator.id, newStrike, newStatus)
+
+            // Send official violation notification
+            val notif = NotificationEntity(
+                id = "notif_violation_" + UUID.randomUUID().toString().take(8),
+                userId = creator.id,
+                type = "SYSTEM",
+                title = "⚠️ تحذير مخالفة رسمي ($newStrike من 5)",
+                message = "تم تأكيد مخالفة المحتوى لإرشادات المجتمع بسبب: $violationCategory. سيتم إنهاء الحساب تلقائياً عند بلوغ 5 مخالفات مؤكدة. يمكنك تقديم استئناف إذا رأيت أن القرار غير دقيق.",
+                targetId = report.targetId
+            )
+            dao.insertNotification(notif)
+        }
+
+        // 3. Take down content if selected
+        if (takeDownContent) {
+            when (report.reportType) {
+                "VIDEO", "SHORT" -> {
+                    dao.updateVideoModeration(report.targetId, "REMOVED", violationCategory)
+                }
+                "COMMENT" -> {
+                    dao.deleteComment(report.targetId)
+                }
+            }
+        }
+
+        // 4. Record Audit Log
+        val auditLog = AuditLogEntity(
+            id = "audit_" + UUID.randomUUID().toString().take(10),
+            adminId = adminId,
+            action = "CONFIRM_VIOLATION",
+            targetUserId = report.reportedUserId,
+            contentId = report.targetId,
+            contentType = report.reportType,
+            reason = violationCategory,
+            previousStatus = "PENDING",
+            newStatus = "STRIKE_$newStrike"
+        )
+        dao.insertAuditLog(auditLog)
+
+        return Result.success(Unit)
+    }
+
+    suspend fun dismissReport(
+        reportId: String,
+        adminId: String,
+        reason: String
+    ): Result<Unit> {
+        val report = dao.getReportByIdDirect(reportId)
+            ?: return Result.failure(Exception("البلاغ غير موجود"))
+
+        val updatedReport = report.copy(
+            status = "DISMISSED",
+            reviewedBy = adminId,
+            reviewedAt = System.currentTimeMillis(),
+            decision = "DISMISSED: $reason"
+        )
+        dao.updateReport(updatedReport)
+
+        val auditLog = AuditLogEntity(
+            id = "audit_" + UUID.randomUUID().toString().take(10),
+            adminId = adminId,
+            action = "DISMISS_REPORT",
+            targetUserId = report.reportedUserId,
+            contentId = report.targetId,
+            contentType = report.reportType,
+            reason = reason,
+            previousStatus = "PENDING",
+            newStatus = "DISMISSED"
+        )
+        dao.insertAuditLog(auditLog)
+
+        return Result.success(Unit)
+    }
+
+    suspend fun submitAppeal(
+        userId: String,
+        contentId: String?,
+        contentType: String,
+        strikeNumber: Int,
+        reason: String,
+        additionalInfo: String
+    ): Result<AppealEntity> {
+        val appeal = AppealEntity(
+            id = "appeal_" + UUID.randomUUID().toString().take(10),
+            userId = userId,
+            contentId = contentId,
+            contentType = contentType,
+            strikeNumber = strikeNumber,
+            reason = reason,
+            additionalInfo = additionalInfo.trim(),
+            status = "PENDING"
+        )
+        dao.insertAppeal(appeal)
+        return Result.success(appeal)
+    }
+
+    suspend fun reviewAppeal(
+        appealId: String,
+        adminId: String,
+        isApproved: Boolean,
+        reviewNotes: String
+    ): Result<Unit> {
+        val appeal = dao.getAppealByIdDirect(appealId)
+            ?: return Result.failure(Exception("طلب الاستئناف غير موجود"))
+
+        val newStatus = if (isApproved) "APPROVED" else "REJECTED"
+        val updatedAppeal = appeal.copy(
+            status = newStatus,
+            reviewedBy = adminId,
+            reviewedAt = System.currentTimeMillis(),
+            reviewNotes = reviewNotes
+        )
+        dao.updateAppeal(updatedAppeal)
+
+        val user = dao.getUserByIdDirect(appeal.userId)
+        if (user != null && isApproved) {
+            // Deduct 1 strike
+            val newWarningCount = (user.warningCount - 1).coerceAtLeast(0)
+            val newAccountStatus = if (newWarningCount < 5) "ACTIVE" else "RESTRICTED"
+            dao.updateUserWarningAndStatus(user.id, newWarningCount, newAccountStatus)
+
+            // Restore content if applicable
+            if (!appeal.contentId.isNullOrBlank() && (appeal.contentType == "VIDEO" || appeal.contentType == "SHORT")) {
+                dao.updateVideoModeration(appeal.contentId, "APPROVED", null)
+            }
+
+            // Notification
+            val notif = NotificationEntity(
+                id = "notif_appeal_" + UUID.randomUUID().toString().take(8),
+                userId = user.id,
+                type = "SYSTEM",
+                title = "✓ تم قبول طلب الاستئناف",
+                message = "تمت مراجعة محتواك وقبول الاستئناف بنجاح. تم خفض عدد المخالفات المسجلة بحسابك إلى ($newWarningCount من 5).",
+                targetId = appeal.contentId
+            )
+            dao.insertNotification(notif)
+        } else if (user != null && !isApproved) {
+            val notif = NotificationEntity(
+                id = "notif_appeal_" + UUID.randomUUID().toString().take(8),
+                userId = user.id,
+                type = "SYSTEM",
+                title = "✕ تم رفض طلب الاستئناف",
+                message = "بعد التدقيق والمراجعة، تم تثبيت قرار المخالفة لعدم تطابق المحتوى مع سياسات المجتمع: $reviewNotes",
+                targetId = appeal.contentId
+            )
+            dao.insertNotification(notif)
+        }
+
+        // Audit Log
+        val auditLog = AuditLogEntity(
+            id = "audit_" + UUID.randomUUID().toString().take(10),
+            adminId = adminId,
+            action = if (isApproved) "APPROVE_APPEAL" else "REJECT_APPEAL",
+            targetUserId = appeal.userId,
+            contentId = appeal.contentId,
+            contentType = appeal.contentType,
+            reason = reviewNotes,
+            previousStatus = "PENDING",
+            newStatus = newStatus
+        )
+        dao.insertAuditLog(auditLog)
+
+        return Result.success(Unit)
+    }
+
+    // --- User Block & Preference System ---
+    fun getBlockedUsers(userId: String): Flow<List<BlockedUserEntity>> = dao.getBlockedUsers(userId)
+    fun isUserBlocked(userId: String, blockedUserId: String): Flow<Boolean> = dao.isUserBlocked(userId, blockedUserId)
+
+    suspend fun blockUser(userId: String, blockedUserId: String): Result<Unit> {
+        if (userId == blockedUserId) return Result.failure(Exception("لا يمكنك حظر حسابك الشخصي"))
+        val block = BlockedUserEntity(
+            id = "block_${userId}_${blockedUserId}",
+            userId = userId,
+            blockedUserId = blockedUserId
+        )
+        dao.insertBlockedUser(block)
+        // Auto unfollow if currently following
+        val channel = dao.getChannelByUserIdDirect(blockedUserId)
+        if (channel != null) {
+            dao.deleteFollow(userId, channel.id)
+            dao.decrementChannelSubscribers(channel.id)
+        }
+        return Result.success(Unit)
+    }
+
+    suspend fun unblockUser(userId: String, blockedUserId: String): Result<Unit> {
+        dao.deleteBlockedUser(userId, blockedUserId)
+        return Result.success(Unit)
+    }
+
+    suspend fun markNotInterested(userId: String, video: VideoEntity): Result<Unit> {
+        val entry = NotInterestedEntity(
+            id = "not_int_${userId}_${video.id}",
+            userId = userId,
+            videoId = video.id,
+            category = video.category,
+            channelId = video.channelId
+        )
+        dao.insertNotInterested(entry)
+        return Result.success(Unit)
+    }
+
+    suspend fun dislikeCategory(userId: String, category: String): Result<Unit> {
+        val entry = DislikedCategoryEntity(
+            id = "dislike_${userId}_${category}",
+            userId = userId,
+            category = category
+        )
+        dao.insertDislikedCategory(entry)
+        return Result.success(Unit)
+    }
+
+    // --- Video Editing by Owner ---
+    suspend fun updateVideoDetails(
+        videoId: String,
+        title: String,
+        description: String,
+        category: String,
+        tags: String
+    ): Result<Unit> {
+        dao.updateVideoDetails(videoId, title.trim(), description.trim(), category, tags.trim())
+        return Result.success(Unit)
+    }
+
+    suspend fun toggleVideoVisibility(videoId: String, isPublic: Boolean): Result<Unit> {
+        dao.updateVideoVisibility(videoId, isPublic)
+        return Result.success(Unit)
+    }
+
+    // =========================================================================
+    // --- Live Streaming, Gifts, and Wallet Operations ---
+    // =========================================================================
+
+    fun getActiveLiveStreams(): Flow<List<LiveStreamEntity>> = dao.getActiveLiveStreams()
+    fun getAllLiveStreams(): Flow<List<LiveStreamEntity>> = dao.getAllLiveStreams()
+    fun getEndedLiveStreams(): Flow<List<LiveStreamEntity>> = dao.getEndedLiveStreams()
+    fun getLiveStreamById(id: String): Flow<LiveStreamEntity?> = dao.getLiveStreamById(id)
+    suspend fun getLiveStreamByIdDirect(id: String): LiveStreamEntity? = dao.getLiveStreamByIdDirect(id)
+
+    suspend fun checkLiveEligibility(userId: String): Result<Boolean> {
+        return authManager.checkLiveEligibilityFromFirestore(userId)
+    }
+
+    suspend fun startLiveStream(
+        hostUserId: String,
+        title: String,
+        coverUrl: String,
+        category: String,
+        isFrontCamera: Boolean,
+        isMicEnabled: Boolean,
+        commentsAllowed: Boolean,
+        giftsAllowed: Boolean
+    ): Result<LiveStreamEntity> {
+        val eligibility = checkLiveEligibility(hostUserId)
+        if (eligibility.isFailure) {
+            return Result.failure(eligibility.exceptionOrNull() ?: Exception("غير مؤهل لبدء بث مباشر"))
+        }
+
+        // End any previous active stream from this host
+        val previousActive = dao.getActiveLiveStreamByHostDirect(hostUserId)
+        if (previousActive != null) {
+            dao.updateLiveStreamStatus(previousActive.id, "ENDED", System.currentTimeMillis())
+            dao.clearViewerSessions(previousActive.id)
+        }
+
+        val hostUser = dao.getUserByIdDirect(hostUserId)!!
+        val streamId = "live_" + UUID.randomUUID().toString().take(10)
+
+        val sampleStreamUrls = listOf(
+            "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4",
+            "https://filesamples.com/samples/video/mp4/sample_960x400_ocean_with_audio.mp4",
+            "https://test-videos.co.uk/vids/jellyfish/mp4/h264/720/Jellyfish_720_10s_1MB.mp4",
+            "https://filesamples.com/samples/video/mp4/sample_1280x720.mp4"
+        )
+        val selectedUrl = sampleStreamUrls.random()
+
+        val stream = LiveStreamEntity(
+            id = streamId,
+            hostUserId = hostUserId,
+            hostUsername = hostUser.username,
+            hostFullName = hostUser.fullName,
+            hostAvatarUrl = hostUser.avatarUrl,
+            title = title.ifBlank { "بث مباشر لـ ${hostUser.fullName}" },
+            coverUrl = coverUrl.ifBlank { hostUser.avatarUrl },
+            category = category,
+            streamUrl = selectedUrl,
+            status = "LIVE",
+            viewersCount = 1,
+            peakViewers = 1,
+            likesCount = 0,
+            totalGiftsCount = 0,
+            totalCoinsEarned = 0L,
+            commentsAllowed = commentsAllowed,
+            giftsAllowed = giftsAllowed,
+            isMicEnabled = isMicEnabled,
+            isFrontCamera = isFrontCamera,
+            startedAt = System.currentTimeMillis()
+        )
+        dao.insertLiveStream(stream)
+
+        // Sync live stream session metadata to Firestore
+        try {
+            val streamMap = hashMapOf<String, Any>(
+                "id" to streamId,
+                "hostUserId" to hostUserId,
+                "hostUsername" to hostUser.username,
+                "hostFullName" to hostUser.fullName,
+                "title" to stream.title,
+                "coverUrl" to stream.coverUrl,
+                "category" to category,
+                "status" to "LIVE",
+                "viewersCount" to 1,
+                "commentsAllowed" to commentsAllowed,
+                "giftsAllowed" to giftsAllowed,
+                "startedAt" to stream.startedAt
+            )
+            authManager.getFirestoreInstance().collection("live_streams").document(streamId).set(streamMap)
+        } catch (e: Exception) {
+            android.util.Log.w("VidoMixRepository", "Firestore stream broadcast sync note: ${e.message}")
+        }
+
+        // Notify followers who have liveNotificationsEnabled
+        val userChannel = dao.getChannelByUserIdDirect(hostUserId)
+        if (userChannel != null) {
+            val channelFollows = dao.getFollowersForChannelDirect(userChannel.id)
+            for (follow in channelFollows) {
+                val followerUser = dao.getUserByIdDirect(follow.followerUserId)
+                if (followerUser != null && followerUser.liveNotificationsEnabled) {
+                    dao.insertNotification(
+                        NotificationEntity(
+                            id = "notif_live_${UUID.randomUUID().toString().take(8)}",
+                            userId = follow.followerUserId,
+                            type = "LIVE_START",
+                            title = "بث مباشر جديد 🔴",
+                            message = "بدأ ${hostUser.fullName} بثًا مباشرًا الآن: ${stream.title}",
+                            targetId = streamId
+                        )
+                    )
+                }
+            }
+        }
+
+        return Result.success(stream)
+    }
+
+    suspend fun endLiveStream(streamId: String, hostUserId: String): Result<Unit> {
+        val stream = dao.getLiveStreamByIdDirect(streamId) ?: return Result.failure(Exception("البث غير موجود"))
+        val currentUser = authManager.currentUser.value
+        val isHost = stream.hostUserId == hostUserId
+        val isAdmin = currentUser?.isAdmin == true
+        if (!isHost && !isAdmin) {
+            return Result.failure(Exception("ليس لديك صلاحية لإنهاء هذا البث"))
+        }
+        dao.updateLiveStreamStatus(streamId, "ENDED", System.currentTimeMillis())
+        dao.clearViewerSessions(streamId)
+        return Result.success(Unit)
+    }
+
+    suspend fun joinLiveStream(streamId: String, user: UserEntity): Result<Boolean> {
+        if (dao.isUserBannedFromStreamDirect(streamId, user.id)) {
+            return Result.failure(Exception("أنت محظور من مشاهدة هذا البث المباشر من قِبل المضيف."))
+        }
+        val stream = dao.getLiveStreamByIdDirect(streamId) ?: return Result.failure(Exception("البث غير موجود أو انتهى"))
+        if (stream.status != "LIVE") {
+            return Result.failure(Exception("انتهى هذا البث المباشر."))
+        }
+
+        val session = LiveViewerSessionEntity(
+            id = "sess_${streamId}_${user.id}",
+            streamId = streamId,
+            userId = user.id,
+            username = user.username,
+            avatarUrl = user.avatarUrl,
+            role = if (stream.hostUserId == user.id) "HOST" else if (user.isAdmin) "MODERATOR" else "VIEWER"
+        )
+        dao.insertViewerSession(session)
+
+        val newCount = stream.viewersCount + 1
+        val newPeak = maxOf(newCount, stream.peakViewers)
+        dao.updateLiveStreamMetrics(
+            streamId,
+            viewers = newCount,
+            peak = newPeak,
+            likes = stream.likesCount,
+            gifts = stream.totalGiftsCount,
+            coins = stream.totalCoinsEarned
+        )
+
+        dao.insertLiveComment(
+            LiveCommentEntity(
+                id = "c_join_${UUID.randomUUID().toString().take(8)}",
+                streamId = streamId,
+                userId = user.id,
+                username = user.username,
+                userAvatarUrl = user.avatarUrl,
+                text = "انضم إلى البث المباشر 👋",
+                isSystemNotification = true
+            )
+        )
+
+        return Result.success(true)
+    }
+
+    suspend fun leaveLiveStream(streamId: String, userId: String) {
+        dao.removeViewerSession(streamId, userId)
+        val stream = dao.getLiveStreamByIdDirect(streamId) ?: return
+        val newCount = maxOf(1, stream.viewersCount - 1)
+        dao.updateLiveStreamMetrics(
+            streamId,
+            viewers = newCount,
+            peak = stream.peakViewers,
+            likes = stream.likesCount,
+            gifts = stream.totalGiftsCount,
+            coins = stream.totalCoinsEarned
+        )
+    }
+
+    fun getLiveComments(streamId: String): Flow<List<LiveCommentEntity>> = dao.getLiveCommentsForStream(streamId)
+
+    suspend fun sendLiveComment(streamId: String, user: UserEntity, text: String): Result<LiveCommentEntity> {
+        val stream = dao.getLiveStreamByIdDirect(streamId) ?: return Result.failure(Exception("البث غير موجود"))
+        if (stream.status != "LIVE") return Result.failure(Exception("البث منتهي"))
+        if (!stream.commentsAllowed && stream.hostUserId != user.id) {
+            return Result.failure(Exception("التعليقات متوقفة في هذا البث حالياً."))
+        }
+        if (dao.isUserMutedInStreamDirect(streamId, user.id)) {
+            return Result.failure(Exception("تم كتمك في هذا البث من قبل المضيف."))
+        }
+        if (dao.isUserBannedFromStreamDirect(streamId, user.id)) {
+            return Result.failure(Exception("أنت محظور من هذا البث."))
+        }
+
+        val comment = LiveCommentEntity(
+            id = "lc_" + UUID.randomUUID().toString().take(10),
+            streamId = streamId,
+            userId = user.id,
+            username = user.username,
+            userAvatarUrl = user.avatarUrl,
+            text = text.trim(),
+            isHost = (stream.hostUserId == user.id),
+            isModerator = user.isAdmin || (user.liveRole == "MODERATOR")
+        )
+        dao.insertLiveComment(comment)
+        return Result.success(comment)
+    }
+
+    suspend fun pinLiveComment(streamId: String, comment: LiveCommentEntity): Result<Unit> {
+        dao.updateLiveCommentPinned(comment.id, true)
+        dao.updateLiveStreamPinnedComment(streamId, comment.id, comment.text, comment.username)
+        return Result.success(Unit)
+    }
+
+    suspend fun unpinLiveComment(streamId: String): Result<Unit> {
+        val stream = dao.getLiveStreamByIdDirect(streamId)
+        if (stream?.pinnedCommentId != null) {
+            dao.updateLiveCommentPinned(stream.pinnedCommentId, false)
+        }
+        dao.updateLiveStreamPinnedComment(streamId, null, null, null)
+        return Result.success(Unit)
+    }
+
+    suspend fun deleteLiveComment(commentId: String): Result<Unit> {
+        dao.deleteLiveComment(commentId)
+        return Result.success(Unit)
+    }
+
+    suspend fun muteUserInLive(streamId: String, targetUserId: String, targetUsername: String): Result<Unit> {
+        val entry = LiveMutedUserEntity(
+            id = "mute_${streamId}_${targetUserId}",
+            streamId = streamId,
+            userId = targetUserId,
+            username = targetUsername
+        )
+        dao.insertMutedUser(entry)
+        return Result.success(Unit)
+    }
+
+    suspend fun unmuteUserInLive(streamId: String, targetUserId: String): Result<Unit> {
+        dao.deleteMutedUser(streamId, targetUserId)
+        return Result.success(Unit)
+    }
+
+    suspend fun banUserFromLive(streamId: String, targetUserId: String, targetUsername: String): Result<Unit> {
+        val entry = LiveBannedViewerEntity(
+            id = "ban_${streamId}_${targetUserId}",
+            streamId = streamId,
+            userId = targetUserId,
+            username = targetUsername
+        )
+        dao.insertBannedViewer(entry)
+        dao.removeViewerSession(streamId, targetUserId)
+        return Result.success(Unit)
+    }
+
+    suspend fun addLiveLike(streamId: String, count: Int = 1) {
+        val stream = dao.getLiveStreamByIdDirect(streamId) ?: return
+        dao.updateLiveStreamMetrics(
+            streamId,
+            viewers = stream.viewersCount,
+            peak = stream.peakViewers,
+            likes = stream.likesCount + count,
+            gifts = stream.totalGiftsCount,
+            coins = stream.totalCoinsEarned
+        )
+    }
+
+    fun getAllGifts(): Flow<List<LiveGiftEntity>> = dao.getAllGifts()
+    fun getActiveGifts(): Flow<List<LiveGiftEntity>> = dao.getActiveGifts()
+
+    suspend fun sendLiveGift(
+        streamId: String,
+        senderUserId: String,
+        giftId: String,
+        quantity: Int = 1
+    ): Result<LiveGiftTransactionEntity> {
+        val stream = dao.getLiveStreamByIdDirect(streamId) ?: return Result.failure(Exception("البث غير موجود"))
+        if (stream.status != "LIVE") return Result.failure(Exception("البث منتهي"))
+        if (!stream.giftsAllowed) return Result.failure(Exception("إرسال الهدايا متوقف في هذا البث حالياً."))
+
+        val sender = dao.getUserByIdDirect(senderUserId) ?: return Result.failure(Exception("المرسل غير موجود"))
+        val gift = dao.getGiftByIdDirect(giftId) ?: return Result.failure(Exception("الهدية غير متوفرة"))
+        if (!gift.isEnabled) return Result.failure(Exception("هذه الهدية معطلة حالياً."))
+
+        val totalCoinsCost = gift.coinPrice * quantity
+        if (sender.coinsBalance < totalCoinsCost) {
+            return Result.failure(Exception("رصيد العملات غير كافٍ! يتطلب $totalCoinsCost عملة، ورصيدك الحالي هو ${sender.coinsBalance} عملة."))
+        }
+
+        val newSenderBalance = sender.coinsBalance - totalCoinsCost
+        dao.updateUserCoinsBalance(senderUserId, newSenderBalance)
+
+        val settings = dao.getPlatformSettingsDirect() ?: PlatformSettingsEntity()
+        val totalUsdValue = totalCoinsCost * settings.coinToUsdRate
+        val hostShareUsd = totalUsdValue * (settings.liveCreatorSharePercent / 100.0)
+        val platformShareUsd = totalUsdValue * (settings.livePlatformSharePercent / 100.0)
+
+        val hostProfile = dao.getMonetizationProfileDirect(stream.hostUserId)
+        if (hostProfile != null) {
+            dao.updateMonetizationProfile(
+                hostProfile.copy(
+                    currentBalance = hostProfile.currentBalance + hostShareUsd,
+                    pendingBalance = hostProfile.pendingBalance,
+                    lifetimeEarnings = hostProfile.lifetimeEarnings + hostShareUsd
+                )
+            )
+        }
+
+        val txId = "gtx_" + UUID.randomUUID().toString().take(12)
+        val transaction = LiveGiftTransactionEntity(
+            id = txId,
+            streamId = streamId,
+            senderUserId = senderUserId,
+            senderUsername = sender.username,
+            senderAvatarUrl = sender.avatarUrl,
+            hostUserId = stream.hostUserId,
+            giftId = gift.id,
+            giftName = gift.name,
+            giftIcon = gift.emojiIcon,
+            giftCoinPrice = gift.coinPrice,
+            quantity = quantity,
+            totalCoins = totalCoinsCost,
+            hostEarningsAmount = hostShareUsd,
+            platformFeeAmount = platformShareUsd
+        )
+        dao.insertGiftTransaction(transaction)
+
+        dao.updateLiveStreamMetrics(
+            id = streamId,
+            viewers = stream.viewersCount,
+            peak = stream.peakViewers,
+            likes = stream.likesCount,
+            gifts = stream.totalGiftsCount + quantity,
+            coins = stream.totalCoinsEarned + totalCoinsCost
+        )
+
+        dao.insertLiveComment(
+            LiveCommentEntity(
+                id = "c_gift_${UUID.randomUUID().toString().take(8)}",
+                streamId = streamId,
+                userId = sender.id,
+                username = sender.username,
+                userAvatarUrl = sender.avatarUrl,
+                text = "أرسل ${gift.name} ${gift.emojiIcon} x$quantity!",
+                isSystemNotification = true
+            )
+        )
+
+        return Result.success(transaction)
+    }
+
+    fun getAllCoinPackages(): Flow<List<CoinPackageEntity>> = dao.getAllCoinPackages()
+    fun getActiveCoinPackages(): Flow<List<CoinPackageEntity>> = dao.getActiveCoinPackages()
+
+    suspend fun purchaseCoins(
+        userId: String,
+        packageId: String,
+        paymentMethod: String = "Google Play Billing"
+    ): Result<CoinPurchaseOrderEntity> {
+        val user = dao.getUserByIdDirect(userId) ?: return Result.failure(Exception("المستخدم غير موجود"))
+        val packages = dao.getAllCoinPackagesDirect()
+        val pkg = packages.find { it.id == packageId } ?: return Result.failure(Exception("الباقة غير موجودة"))
+
+        val orderId = "GPA." + UUID.randomUUID().toString().take(14).replace("-", "").uppercase()
+        if (dao.hasPurchaseOrder(orderId)) {
+            return Result.failure(Exception("تمت معالجة هذه العملية مسبقاً لمنع التكرار."))
+        }
+
+        val totalCoinsAdded = pkg.coinsAmount + pkg.bonusCoins
+        val newBalance = user.coinsBalance + totalCoinsAdded
+        dao.updateUserCoinsBalance(userId, newBalance)
+
+        val order = CoinPurchaseOrderEntity(
+            id = orderId,
+            userId = userId,
+            packageId = packageId,
+            coinsAmount = totalCoinsAdded,
+            pricePaidUsd = pkg.priceUsd,
+            paymentMethod = paymentMethod,
+            status = "COMPLETED",
+            serverVerificationToken = "sig_valid_" + UUID.randomUUID().toString().take(16)
+        )
+        dao.insertCoinPurchaseOrder(order)
+
+        return Result.success(order)
+    }
+
+    fun getUserPurchaseOrders(userId: String): Flow<List<CoinPurchaseOrderEntity>> = dao.getUserPurchaseOrders(userId)
+    fun getAllPurchaseOrders(): Flow<List<CoinPurchaseOrderEntity>> = dao.getAllPurchaseOrders()
+    fun getGiftTransactionsSent(userId: String): Flow<List<LiveGiftTransactionEntity>> = dao.getGiftTransactionsSentByUser(userId)
+    fun getGiftTransactionsReceived(hostUserId: String): Flow<List<LiveGiftTransactionEntity>> = dao.getGiftTransactionsReceivedByUser(hostUserId)
+    fun getAllGiftTransactions(): Flow<List<LiveGiftTransactionEntity>> = dao.getAllGiftTransactions()
+    fun getViewerSessions(streamId: String): Flow<List<LiveViewerSessionEntity>> = dao.getViewerSessions(streamId)
+
+    suspend fun adminBanLiveStream(streamId: String, adminId: String, reason: String): Result<Unit> {
+        val stream = dao.getLiveStreamByIdDirect(streamId) ?: return Result.failure(Exception("البث غير موجود"))
+        dao.updateLiveStreamStatus(streamId, "BANNED", System.currentTimeMillis())
+        dao.clearViewerSessions(streamId)
+        dao.insertAuditLog(
+            AuditLogEntity(
+                id = "audit_live_${UUID.randomUUID().toString().take(8)}",
+                adminId = adminId,
+                action = "BAN_LIVE_STREAM",
+                targetUserId = stream.hostUserId,
+                contentId = streamId,
+                contentType = "LIVE_STREAM",
+                reason = reason,
+                previousStatus = stream.status,
+                newStatus = "BANNED"
+            )
+        )
+        return Result.success(Unit)
+    }
+
+    suspend fun adminSaveGift(gift: LiveGiftEntity): Result<Unit> {
+        dao.insertGift(gift)
+        return Result.success(Unit)
+    }
+
+    suspend fun adminDeleteGift(giftId: String): Result<Unit> {
+        dao.deleteGift(giftId)
+        return Result.success(Unit)
+    }
+
+    suspend fun adminSaveCoinPackage(pkg: CoinPackageEntity): Result<Unit> {
+        dao.insertCoinPackage(pkg)
+        return Result.success(Unit)
+    }
+
+    suspend fun adminDeleteCoinPackage(pkgId: String): Result<Unit> {
+        dao.deleteCoinPackage(pkgId)
+        return Result.success(Unit)
+    }
+
+    suspend fun adminUpdateLiveRevenueShare(platformShare: Double, creatorShare: Double): Result<Unit> {
+        val settings = dao.getPlatformSettingsDirect() ?: PlatformSettingsEntity()
+        val updated = settings.copy(
+            livePlatformSharePercent = platformShare,
+            liveCreatorSharePercent = creatorShare
+        )
+        dao.insertPlatformSettings(updated)
+        return Result.success(Unit)
+    }
+
+    suspend fun toggleLiveNotifications(userId: String, enabled: Boolean): Result<Unit> {
+        val user = dao.getUserByIdDirect(userId) ?: return Result.failure(Exception("المستخدم غير موجود"))
+        dao.insertUser(user.copy(liveNotificationsEnabled = enabled))
+        return Result.success(Unit)
+    }
 }

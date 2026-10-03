@@ -10,8 +10,24 @@ class RecommendationEngine(private val dao: VidoMixDao) {
         userId: String?,
         candidateVideos: List<VideoEntity>
     ): List<VideoEntity> {
-        if (userId == null || candidateVideos.isEmpty()) {
+        if (candidateVideos.isEmpty()) return emptyList()
+
+        if (userId == null) {
             return candidateVideos.sortedByDescending { it.viewsCount + (it.likesCount * 3) }
+        }
+
+        // Fetch user exclusion signals
+        val blockedUsers = dao.getBlockedUsersDirect(userId).map { it.blockedUserId }.toSet()
+        val notInterestedVideoIds = dao.getNotInterestedVideosDirect(userId).map { it.videoId }.toSet()
+        val dislikedCategories = dao.getDislikedCategoriesDirect(userId).map { it.category }.toSet()
+
+        // Filter out completely excluded content
+        val filteredCandidates = candidateVideos.filter { video ->
+            if (notInterestedVideoIds.contains(video.id)) return@filter false
+            // Check if creator channel is blocked
+            val channel = dao.getChannelByIdDirect(video.channelId)
+            if (channel != null && blockedUsers.contains(channel.userId)) return@filter false
+            true
         }
 
         // Gather user interaction signals
@@ -27,7 +43,7 @@ class RecommendationEngine(private val dao: VidoMixDao) {
         val searchTerms = recentSearches.map { it.query.lowercase() }
 
         // Calculate score for each candidate video
-        val scoredVideos = candidateVideos.map { video ->
+        val scoredVideos = filteredCandidates.map { video ->
             var score = 0.0
 
             // Baseline popularity weighting
@@ -37,6 +53,11 @@ class RecommendationEngine(private val dao: VidoMixDao) {
             // Category affinity boost
             val categoryWeight = preferredCategories[video.category] ?: 0
             score += categoryWeight * 25.0
+
+            // Penalty for disliked categories
+            if (dislikedCategories.contains(video.category)) {
+                score -= 100.0
+            }
 
             // Search history keywords affinity
             for (query in searchTerms) {

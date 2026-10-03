@@ -40,12 +40,14 @@ import com.example.core.clickableDebounced
 import com.example.data.model.VideoEntity
 import com.example.player.VideoPlayerView
 import com.example.ui.components.CommentsBottomSheet
-import com.example.ui.components.ReportDialog
+import com.example.ui.components.ReportContentDialog
+import com.example.ui.components.VideoMoreMenuBottomSheet
 import com.example.ui.components.formatViews
 import com.example.ui.theme.VidoCoral
 import com.example.ui.theme.VidoCyan
 import com.example.ui.theme.VidoPurple
 import com.example.ui.viewmodel.VidoMixViewModel
+import kotlinx.coroutines.launch
 
 sealed class ShortsFeedItem {
     data class VideoItem(val video: VideoEntity) : ShortsFeedItem()
@@ -104,6 +106,9 @@ fun ShortsScreen(
     var showCommentsSheet by remember { mutableStateOf(false) }
     var reportingShortId by remember { mutableStateOf<String?>(null) }
     var activeShortVideo by remember { mutableStateOf<VideoEntity?>(null) }
+    var moreMenuShortVideo by remember { mutableStateOf<VideoEntity?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     val adInterval = platformSettings.shortsAdInterval.coerceAtLeast(2)
 
@@ -198,7 +203,7 @@ fun ShortsScreen(
                             }
                             context.startActivity(Intent.createChooser(sendIntent, "مشاركة المقطع"))
                         },
-                        onReportClick = { reportingShortId = shortItem.id }
+                        onMoreOptionsClick = { moreMenuShortVideo = shortItem }
                     )
                 }
                 is ShortsFeedItem.AdItem -> {
@@ -253,6 +258,14 @@ fun ShortsScreen(
                 }
             }
         }
+
+        // Snackbar Host for feedback
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 80.dp)
+        )
     }
 
     // Comments Bottom Sheet for Short
@@ -268,14 +281,64 @@ fun ShortsScreen(
         )
     }
 
+    // Video More Menu Bottom Sheet
+    moreMenuShortVideo?.let { shortVideo ->
+        val channel = channelMap[shortVideo.channelId]
+        VideoMoreMenuBottomSheet(
+            video = shortVideo,
+            channel = channel,
+            currentUser = currentUser,
+            isSaved = false,
+            onDismiss = { moreMenuShortVideo = null },
+            onNotInterested = {
+                viewModel.markVideoNotInterested(shortVideo) { msg ->
+                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                }
+            },
+            onBlockCreator = { creatorUserId ->
+                viewModel.blockCreator(creatorUserId) { _, msg ->
+                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                }
+            },
+            onReport = { reportingShortId = shortVideo.id },
+            onSaveToggle = {
+                viewModel.toggleSaveVideoById(shortVideo.id)
+                scope.launch { snackbarHostState.showSnackbar("تم تحديث حالة الحفظ") }
+            },
+            onDislikeCategory = { cat ->
+                viewModel.dislikeCategory(cat) { msg ->
+                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                }
+            },
+            onDownload = {
+                scope.launch { snackbarHostState.showSnackbar("جاري بدء تنزيل المقطع للمشاهدة بدون إنترنت...") }
+            },
+            onEditVideo = { t, d, c, tg ->
+                viewModel.editVideoDetails(shortVideo.id, t, d, c, tg) { _, _ ->
+                    scope.launch { snackbarHostState.showSnackbar("تم حفظ تعديلات المقطع") }
+                }
+            },
+            onToggleVisibility = { pub ->
+                viewModel.toggleVideoVisibility(shortVideo.id, pub) { msg ->
+                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                }
+            },
+            onDeleteVideo = {
+                viewModel.deleteVideo(shortVideo.id)
+                scope.launch { snackbarHostState.showSnackbar("تم حذف المقطع بنجاح") }
+            }
+        )
+    }
+
     // Report Dialog
     reportingShortId?.let { shortId ->
-        ReportDialog(
-            targetType = "مقطع قصير",
-            onDismiss = { reportingShortId = null },
+        ReportContentDialog(
+            targetTitle = activeShortVideo?.title ?: "مقطع Short",
+            reportType = "SHORT",
+            onDismissRequest = { reportingShortId = null },
             onSubmitReport = { reason, details ->
                 viewModel.submitReport("SHORT", shortId, reason, details)
-                reportingShortId = null
+                scope.launch { snackbarHostState.showSnackbar("تم إرسال البلاغ بنجاح") }
             }
         )
     }
@@ -425,7 +488,7 @@ fun ShortsPageItem(
     onChannelClick: () -> Unit,
     onCommentsClick: () -> Unit,
     onShareClick: () -> Unit,
-    onReportClick: () -> Unit,
+    onMoreOptionsClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var areControlsVisible by remember { mutableStateOf(true) }
@@ -604,15 +667,17 @@ fun ShortsPageItem(
                         )
                     }
 
-                    // Report Button
+                    // More Options (Three dots ⋮)
                     IconButton(
-                        onClick = onReportClick,
-                        modifier = Modifier.size(32.dp)
+                        onClick = onMoreOptionsClick,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .testTag("short_more_button_${shortVideo.id}")
                     ) {
                         Icon(
                             imageVector = Icons.Default.MoreVert,
-                            contentDescription = "المزيد والتبليغ",
-                            tint = Color.White.copy(alpha = 0.8f)
+                            contentDescription = "خيارات إضافية للمقطع",
+                            tint = Color.White.copy(alpha = 0.9f)
                         )
                     }
 

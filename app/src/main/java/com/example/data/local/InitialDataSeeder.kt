@@ -503,5 +503,193 @@ object InitialDataSeeder {
             )
         )
         initialProfiles.forEach { dao.insertMonetizationProfile(it) }
+
+        // 10. Initial Moderation Reports
+        val initialReports = listOf(
+            ReportEntity(
+                id = "rep_101",
+                reporterUserId = "user_sports",
+                reportedUserId = "user_gaming",
+                targetId = "vid_long_2",
+                reportType = "VIDEO",
+                reason = "عنف شديد أو مشاهد دموية",
+                details = "يحتوي المقطع على مشهد مفاجئ في الدقيقة 4:20 قد لا يناسب صغار السن.",
+                status = "PENDING",
+                timestamp = System.currentTimeMillis() - (1000L * 60 * 60 * 3)
+            ),
+            ReportEntity(
+                id = "rep_102",
+                reporterUserId = "user_tech",
+                reportedUserId = "user_chef",
+                targetId = "comm_3",
+                reportType = "COMMENT",
+                reason = "Spam واحتيال إلكتروني",
+                details = "رابط مشبوه في التعليقات يطلب التسجيل في موقع خارجي.",
+                status = "PENDING",
+                timestamp = System.currentTimeMillis() - (1000L * 60 * 60 * 12)
+            ),
+            ReportEntity(
+                id = "rep_103",
+                reporterUserId = "user_gaming",
+                reportedUserId = "user_cinema",
+                targetId = "short_5",
+                reportType = "SHORT",
+                reason = "انتهاك حقوق الملكية الفكرية",
+                details = "استخدام مقطع مرئي غير مصرح من فيلم بدون إذن.",
+                status = "CONFIRMED",
+                reviewedBy = "user_admin",
+                reviewedAt = System.currentTimeMillis() - (1000L * 60 * 60 * 24),
+                decision = "CONFIRMED: انتهاك حقوق الملكية الفكرية",
+                timestamp = System.currentTimeMillis() - (1000L * 60 * 60 * 48)
+            )
+        )
+        initialReports.forEach { dao.insertReport(it) }
+
+        // 11. Initial Appeals
+        val initialAppeals = listOf(
+            AppealEntity(
+                id = "appeal_201",
+                userId = "user_cinema",
+                contentId = "short_5",
+                contentType = "SHORT",
+                strikeNumber = 1,
+                reason = "المقطع يدخل تحت الاستخدام العادل (Fair Use) والنقد الفني التحليلي ولم يتم انتهاك الحقوق.",
+                additionalInfo = "جميع المقاطع مأخوذة من إعلانات تشويقية رسمية ومجانية.",
+                status = "PENDING",
+                timestamp = System.currentTimeMillis() - (1000L * 60 * 60 * 6)
+            )
+        )
+        initialAppeals.forEach { dao.insertAppeal(it) }
+
+        // 12. Initial Audit Logs
+        val initialAuditLogs = listOf(
+            AuditLogEntity(
+                id = "audit_301",
+                adminId = "user_admin",
+                action = "CONFIRM_VIOLATION",
+                targetUserId = "user_cinema",
+                contentId = "short_5",
+                contentType = "SHORT",
+                reason = "انتهاك حقوق الملكية الفكرية",
+                previousStatus = "PENDING",
+                newStatus = "STRIKE_1",
+                timestamp = System.currentTimeMillis() - (1000L * 60 * 60 * 24)
+            )
+        )
+        initialAuditLogs.forEach { dao.insertAuditLog(it) }
+
+        // 13. Seed Live Gifts
+        if (dao.getAllGiftsDirect().isEmpty()) {
+            val gifts = listOf(
+                LiveGiftEntity("gift_1", "قلب", "❤️", "HEART_BURST", 1L, true, 1),
+                LiveGiftEntity("gift_2", "وردة", "🌹", "ROSE_SHOWER", 5L, true, 2),
+                LiveGiftEntity("gift_3", "نجمة", "⭐", "STAR_FALL", 20L, true, 3),
+                LiveGiftEntity("gift_4", "ألماسة", "💎", "DIAMOND_GLOW", 100L, true, 4),
+                LiveGiftEntity("gift_5", "تاج ملكي", "👑", "CROWN_ROYAL", 500L, true, 5),
+                LiveGiftEntity("gift_6", "صاروخ فضائي", "🚀", "ROCKET_LAUNCH", 1000L, true, 6),
+                LiveGiftEntity("gift_7", "قلعة الأساطير", "🏰", "CASTLE_EPIC", 5000L, true, 7)
+            )
+            gifts.forEach { dao.insertGift(it) }
+        }
+
+        // 14. Seed Coin Packages
+        if (dao.getAllCoinPackagesDirect().isEmpty()) {
+            val packages = listOf(
+                CoinPackageEntity("pkg_1", 100L, 0L, 0.99, "باقة المبتدئ", false, true),
+                CoinPackageEntity("pkg_2", 500L, 50L, 4.99, "باقة الشغف", false, true),
+                CoinPackageEntity("pkg_3", 1000L, 150L, 9.99, "باقة النجوم", true, true),
+                CoinPackageEntity("pkg_4", 5000L, 1000L, 47.99, "باقة الملوك", false, true),
+                CoinPackageEntity("pkg_5", 10000L, 2500L, 89.99, "باقة الأساطير", false, true)
+            )
+            packages.forEach { dao.insertCoinPackage(it) }
+        }
+
+        // 15. Seed Active Live Streams
+        if (dao.getLiveStreamByIdDirect("live_1") == null) {
+            val liveStreams = listOf(
+                LiveStreamEntity(
+                    id = "live_1",
+                    hostUserId = "user_gaming",
+                    hostUsername = "gamer_pro",
+                    hostFullName = "أحمد جيمينج",
+                    hostAvatarUrl = "https://images.unsplash.com/photo-1566492031773-4f4e44671857?w=200&auto=format&fit=crop&q=80",
+                    title = "بث مباشر: بطولة الأساطير وتحديات المتابعين 🎮🔥",
+                    coverUrl = "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=800&auto=format&fit=crop&q=80",
+                    category = "ألعاب",
+                    streamUrl = "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4",
+                    status = "LIVE",
+                    viewersCount = 1420,
+                    peakViewers = 1890,
+                    likesCount = 8400,
+                    totalGiftsCount = 86,
+                    totalCoinsEarned = 12500L,
+                    commentsAllowed = true,
+                    giftsAllowed = true,
+                    pinnedCommentId = "pin_1",
+                    pinnedCommentText = "مرحباً بكم جميعاً في البث! تفاعلكم يسعدنا، سيتم السحب نهاية الجيم 🎁",
+                    pinnedCommentUser = "أحمد جيمينج"
+                ),
+                LiveStreamEntity(
+                    id = "live_2",
+                    hostUserId = "user_tech",
+                    hostUsername = "tech_faisal",
+                    hostFullName = "فيصل التقني",
+                    hostAvatarUrl = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80",
+                    title = "مباشر: مراجعة هواتف المستقبل والإجابة على أسئلتكم 📱✨",
+                    coverUrl = "https://images.unsplash.com/photo-1519389950473-47ba0277781c?w=800&auto=format&fit=crop&q=80",
+                    category = "تقنية",
+                    streamUrl = "https://test-videos.co.uk/vids/jellyfish/mp4/h264/720/Jellyfish_720_10s_1MB.mp4",
+                    status = "LIVE",
+                    viewersCount = 890,
+                    peakViewers = 1200,
+                    likesCount = 4320,
+                    totalGiftsCount = 45,
+                    totalCoinsEarned = 6700L
+                ),
+                LiveStreamEntity(
+                    id = "live_3",
+                    hostUserId = "user_chef",
+                    hostUsername = "chef_sara",
+                    hostFullName = "سارة كيتشن",
+                    hostAvatarUrl = "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=200&auto=format&fit=crop&q=80",
+                    title = "طبخ مباشر: سر أشهى حلى عربي سريع للعيد 🍰👩‍🍳",
+                    coverUrl = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=800&auto=format&fit=crop&q=80",
+                    category = "ترفيه",
+                    streamUrl = "https://filesamples.com/samples/video/mp4/sample_960x400_ocean_with_audio.mp4",
+                    status = "LIVE",
+                    viewersCount = 630,
+                    peakViewers = 750,
+                    likesCount = 3100,
+                    totalGiftsCount = 38,
+                    totalCoinsEarned = 3200L
+                ),
+                LiveStreamEntity(
+                    id = "live_4",
+                    hostUserId = "user_explore",
+                    hostUsername = "travel_omar",
+                    hostFullName = "عمر رحالة",
+                    hostAvatarUrl = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&auto=format&fit=crop&q=80",
+                    title = "دردشة ومناظر حية من جبال الألب السويسرية 🏔️❄️",
+                    coverUrl = "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=800&auto=format&fit=crop&q=80",
+                    category = "دردشة",
+                    streamUrl = "https://filesamples.com/samples/video/mp4/sample_1280x720.mp4",
+                    status = "LIVE",
+                    viewersCount = 1150,
+                    peakViewers = 1300,
+                    likesCount = 9500,
+                    totalGiftsCount = 92,
+                    totalCoinsEarned = 9800L
+                )
+            )
+            liveStreams.forEach { dao.insertLiveStream(it) }
+
+            // Initial Comments for live_1
+            val sampleComments = listOf(
+                LiveCommentEntity("c_live_1", "live_1", "user_tech", "tech_faisal", "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80", "منور يا أحمد! لعبة خرافية 🔥", isHost = false, isModerator = true),
+                LiveCommentEntity("c_live_2", "live_1", "user_explore", "travel_omar", "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&auto=format&fit=crop&q=80", "أداء أسطوري اليوم ما شاء الله 👏", isHost = false, isModerator = false),
+                LiveCommentEntity("c_live_3", "live_1", "user_chef", "chef_sara", "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=200&auto=format&fit=crop&q=80", "أرسلت لك وردة 🌹 استمر!", isHost = false, isModerator = false)
+            )
+            sampleComments.forEach { dao.insertLiveComment(it) }
+        }
     }
 }

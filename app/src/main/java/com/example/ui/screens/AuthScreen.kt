@@ -335,6 +335,52 @@ fun AuthScreen(
                 }
             }
 
+            // Real Google Sign-In Button
+            item {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                var isGoogleLoading by remember { mutableStateOf(false) }
+
+                OutlinedButton(
+                    onClick = {
+                        isGoogleLoading = true
+                        errorMessage = null
+                        coroutineScope.launch {
+                            val result = viewModel.authManager.signInWithGoogle(context)
+                            isGoogleLoading = false
+                            if (result.isSuccess) {
+                                onAuthSuccess()
+                            } else {
+                                errorMessage = result.exceptionOrNull()?.message ?: "فشل تسجيل الدخول عبر Google"
+                            }
+                        }
+                    },
+                    enabled = !isLoading && !isGoogleLoading,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("google_signin_button"),
+                    shape = RoundedCornerShape(25.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    if (isGoogleLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                    } else {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text("G ", color = Color(0xFF4285F4), fontWeight = FontWeight.Black, fontSize = 20.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "متابعة تسجيل الدخول بحساب Google",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                }
+            }
+
             // Quick login presets
             item {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))

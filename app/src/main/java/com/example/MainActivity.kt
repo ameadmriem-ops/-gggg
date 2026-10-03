@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.example.core.AppCrashReporter.installGlobalHandler()
         enableEdgeToEdge()
         setContent {
             val isDark by viewModel.isDarkMode.collectAsStateWithLifecycle()
@@ -149,6 +150,12 @@ fun VidoMixApp(viewModel: VidoMixViewModel) {
                     },
                     onProfileClick = {
                         navController.navigate(Screen.Profile.route)
+                    },
+                    onNavigateToLive = { streamId ->
+                        navController.navigate(Screen.LiveBroadcast.createRoute(streamId))
+                    },
+                    onStartLiveClick = {
+                        navController.navigate(Screen.LiveSetup.route)
                     }
                 )
             }
@@ -187,6 +194,12 @@ fun VidoMixApp(viewModel: VidoMixViewModel) {
                         navController.navigate(Screen.Home.route) {
                             popUpTo(Screen.Home.route) { inclusive = true }
                         }
+                    },
+                    onStartLiveClick = {
+                        navController.navigate(Screen.LiveSetup.route)
+                    },
+                    onNavigateToVideo = { videoId ->
+                        navController.navigate(Screen.VideoDetail.createRoute(videoId))
                     }
                 )
             }
@@ -215,6 +228,12 @@ fun VidoMixApp(viewModel: VidoMixViewModel) {
                     },
                     onNavigateToPayments = {
                         navController.navigate(Screen.Payments.route)
+                    },
+                    onNavigateToWallet = {
+                        navController.navigate(Screen.Wallet.route)
+                    },
+                    onNavigateToLiveSetup = {
+                        navController.navigate(Screen.LiveSetup.route)
                     }
                 )
             }
@@ -327,6 +346,46 @@ fun VidoMixApp(viewModel: VidoMixViewModel) {
                 AdminDashboardScreen(
                     viewModel = viewModel,
                     onNavigateBack = { navController.popBackStack() }
+                )
+            }
+
+            // Wallet Screen
+            composable(Screen.Wallet.route) {
+                WalletScreen(
+                    viewModel = viewModel,
+                    onNavigateBack = { navController.popBackStack() },
+                    onNavigateToAuth = { navController.navigate(Screen.Auth.route) }
+                )
+            }
+
+            // Live Stream Setup Screen
+            composable(Screen.LiveSetup.route) {
+                LiveSetupScreen(
+                    viewModel = viewModel,
+                    onNavigateBack = { navController.popBackStack() },
+                    onStreamStarted = { streamId ->
+                        navController.navigate(Screen.LiveBroadcast.createRoute(streamId)) {
+                            popUpTo(Screen.LiveSetup.route) { inclusive = true }
+                        }
+                    },
+                    onNavigateToAuth = { navController.navigate(Screen.Auth.route) }
+                )
+            }
+
+            // Live Broadcast Screen
+            composable(
+                route = Screen.LiveBroadcast.route,
+                arguments = listOf(navArgument("streamId") { type = NavType.StringType })
+            ) { backStackEntry ->
+                val streamId = backStackEntry.arguments?.getString("streamId") ?: ""
+                LiveBroadcastScreen(
+                    streamId = streamId,
+                    viewModel = viewModel,
+                    onNavigateBack = { navController.popBackStack() },
+                    onNavigateToWallet = { navController.navigate(Screen.Wallet.route) },
+                    onNavigateToChannel = { channelId ->
+                        navController.navigate(Screen.Channel.createRoute(channelId))
+                    }
                 )
             }
         }

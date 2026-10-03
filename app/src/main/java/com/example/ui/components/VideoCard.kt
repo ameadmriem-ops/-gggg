@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.model.ChannelEntity
+import com.example.data.model.UserEntity
 import com.example.data.model.VideoEntity
 import com.example.ui.theme.VidoCyan
 
@@ -38,10 +39,19 @@ fun VideoCard(
     onSaveToggle: (String) -> Unit = {},
     onShareClick: (VideoEntity) -> Unit = {},
     onReportClick: (String) -> Unit = {},
+    onMoreOptionsClick: ((VideoEntity) -> Unit)? = null,
+    onNotInterested: (() -> Unit)? = null,
+    onBlockCreator: ((String) -> Unit)? = null,
+    onDislikeCategory: ((String) -> Unit)? = null,
+    onDownload: (() -> Unit)? = null,
+    onEditVideo: ((String, String, String, String) -> Unit)? = null,
+    onToggleVisibility: ((Boolean) -> Unit)? = null,
+    onDeleteVideo: (() -> Unit)? = null,
+    currentUser: UserEntity? = null,
     isSaved: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    var showMenu by remember { mutableStateOf(false) }
+    var showMoreSheet by remember { mutableStateOf(false) }
 
     Card(
         modifier = modifier
@@ -177,59 +187,48 @@ fun VideoCard(
                     }
                 }
 
-                // Options Menu button
-                Box {
-                    IconButton(
-                        onClick = { showMenu = true },
-                        modifier = Modifier.size(28.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = "خيارات",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text(if (isSaved) "إزالة من المحفوظات" else "حفظ في المحفوظات") },
-                            leadingIcon = {
-                                Icon(
-                                    if (isSaved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                                    contentDescription = null
-                                )
-                            },
-                            onClick = {
-                                showMenu = false
-                                onSaveToggle(video.id)
-                            }
-                        )
-
-                        DropdownMenuItem(
-                            text = { Text("مشاركة الفيديو") },
-                            leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                            onClick = {
-                                showMenu = false
-                                onShareClick(video)
-                            }
-                        )
-
-                        DropdownMenuItem(
-                            text = { Text("إبلاغ عن محتوى") },
-                            leadingIcon = { Icon(Icons.Outlined.Flag, contentDescription = null) },
-                            onClick = {
-                                showMenu = false
-                                onReportClick(video.id)
-                            }
-                        )
-                    }
+                // Options Menu button (Three dots ⋮)
+                IconButton(
+                    onClick = {
+                        if (onMoreOptionsClick != null) {
+                            onMoreOptionsClick(video)
+                        } else {
+                            showMoreSheet = true
+                        }
+                    },
+                    modifier = Modifier
+                        .size(32.dp)
+                        .testTag("video_options_button_${video.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = "خيارات إضافية",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
         }
+    }
+
+    // Video More Menu Bottom Sheet
+    if (showMoreSheet) {
+        VideoMoreMenuBottomSheet(
+            video = video,
+            channel = channel,
+            currentUser = currentUser,
+            isSaved = isSaved,
+            onDismiss = { showMoreSheet = false },
+            onNotInterested = { onNotInterested?.invoke() ?: onReportClick(video.id) },
+            onBlockCreator = { creatorId -> onBlockCreator?.invoke(creatorId) },
+            onReport = { onReportClick(video.id) },
+            onSaveToggle = { onSaveToggle(video.id) },
+            onDislikeCategory = { cat -> onDislikeCategory?.invoke(cat) },
+            onDownload = { onDownload?.invoke() },
+            onEditVideo = { t, d, c, tg -> onEditVideo?.invoke(t, d, c, tg) },
+            onToggleVisibility = { pub -> onToggleVisibility?.invoke(pub) },
+            onDeleteVideo = { onDeleteVideo?.invoke() }
+        )
     }
 }
 

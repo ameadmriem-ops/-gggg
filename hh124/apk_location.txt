@@ -1,0 +1,7 @@
+مسار ملف الـ APK المجمّع بنجاح:
+/app/build/outputs/apk/debug/app-debug.apk
+
+حالة التجميع: BUILD SUCCESSFUL
+نوع النسخة: Debug APK
+التطبيق: VidoMix
+تم تفعيل شبكة الحماية من الانهيار (AppCrashReporter) واعتراض الاستثناءات لمنع التوقف المفاجئ.

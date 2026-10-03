@@ -21,5 +21,7 @@ data class VideoEntity(
     val isPublic: Boolean = true,
     val uploadTimestamp: Long = System.currentTimeMillis(),
     val qualityOptions: String = "1080p, 720p, 480p, Auto",
-    val soundTrackTitle: String = "الصوت الأصلي - VidoMix"
+    val soundTrackTitle: String = "الصوت الأصلي - VidoMix",
+    val moderationStatus: String = "APPROVED", // "PENDING", "APPROVED", "UNDER_REVIEW", "REJECTED", "REMOVED"
+    val moderationReason: String? = null
 )

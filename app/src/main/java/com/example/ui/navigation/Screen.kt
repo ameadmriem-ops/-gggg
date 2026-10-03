@@ -18,6 +18,12 @@ sealed class Screen(val route: String) {
     data object Monetization : Screen("monetization")
     data object CreatorStudio : Screen("creator_studio")
     data object Payments : Screen("payments")
+    data object Wallet : Screen("wallet")
+    data object LiveSetup : Screen("live_setup")
+
+    data object LiveBroadcast : Screen("live_broadcast/{streamId}") {
+        fun createRoute(streamId: String) = "live_broadcast/$streamId"
+    }
 
     data object VideoDetail : Screen("video_detail/{videoId}") {
         fun createRoute(videoId: String) = "video_detail/$videoId"

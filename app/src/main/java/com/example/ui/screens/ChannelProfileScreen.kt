@@ -225,6 +225,7 @@ fun ChannelProfileScreen(
                                 VideoCard(
                                     video = video,
                                     channel = channel,
+                                    currentUser = currentUser,
                                     onVideoClick = onNavigateToVideo,
                                     onChannelClick = {}
                                 )
@@ -251,6 +252,8 @@ fun ChannelProfileScreen(
                                 channelShorts.forEach { shortItem ->
                                     ShortThumbnailCard(
                                         video = shortItem,
+                                        channel = channel,
+                                        currentUser = currentUser,
                                         onClick = onNavigateToShorts
                                     )
                                 }

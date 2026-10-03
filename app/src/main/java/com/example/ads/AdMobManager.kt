@@ -2,6 +2,7 @@ package com.example.ads
 
 import android.app.Activity
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import com.google.android.gms.ads.AdError
 import com.google.android.gms.ads.AdRequest
@@ -22,6 +23,28 @@ object AdMobManager {
     const val APP_ID = "ca-app-pub-2277779478101583~1640596672"
     const val VIDEO_PREROLL_AD_UNIT_ID = "ca-app-pub-2277779478101583/6458732523"
     const val SHORTS_AD_UNIT_ID = "ca-app-pub-2277779478101583/7384801383"
+    const val TEST_INTERSTITIAL_AD_UNIT_ID = "ca-app-pub-3940256099942544/1033173712"
+
+    fun isRunningOnEmulator(): Boolean {
+        return (Build.FINGERPRINT.startsWith("generic")
+                || Build.FINGERPRINT.startsWith("unknown")
+                || Build.MODEL.contains("google_sdk")
+                || Build.MODEL.contains("Emulator")
+                || Build.MODEL.contains("Android SDK built for x86")
+                || Build.MANUFACTURER.contains("Genymotion")
+                || (Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic"))
+                || "google_sdk" == Build.PRODUCT
+                || Build.HARDWARE.contains("goldfish")
+                || Build.HARDWARE.contains("ranchu"))
+    }
+
+    fun getEffectiveAdUnitId(): String {
+        return if (com.example.BuildConfig.DEBUG) {
+            TEST_INTERSTITIAL_AD_UNIT_ID
+        } else {
+            VIDEO_PREROLL_AD_UNIT_ID
+        }
+    }
 
     private var isInitialized = false
     private var preRollAd: InterstitialAd? = null
@@ -31,6 +54,10 @@ object AdMobManager {
     fun initialize(context: Context) {
         if (!isInitialized) {
             isInitialized = true
+            if (isRunningOnEmulator()) {
+                Log.d("AdMobManager", "Emulator environment detected: AdServices Measurement binding skipped.")
+                return
+            }
             scope.launch {
                 try {
                     val requestConfiguration = RequestConfiguration.Builder()
@@ -50,6 +77,7 @@ object AdMobManager {
     }
 
     fun loadPreRollAd(context: Context) {
+        if (isRunningOnEmulator()) return
         if (isLoadingAd || preRollAd != null) return
         isLoadingAd = true
 
@@ -57,7 +85,7 @@ object AdMobManager {
             val adRequest = AdRequest.Builder().build()
             InterstitialAd.load(
                 context,
-                VIDEO_PREROLL_AD_UNIT_ID,
+                getEffectiveAdUnitId(),
                 adRequest,
                 object : InterstitialAdLoadCallback() {
                     override fun onAdLoaded(interstitialAd: InterstitialAd) {
@@ -92,6 +120,20 @@ object AdMobManager {
         onDismiss: () -> Unit,
         onPaidEvent: (AdImpressionResult) -> Unit
     ) {
+        if (isRunningOnEmulator()) {
+            val impressionId = "imp_" + UUID.randomUUID().toString().take(12)
+            onPaidEvent(
+                AdImpressionResult(
+                    impressionId = impressionId,
+                    revenueValue = 0.021,
+                    currency = "USD",
+                    precision = "ESTIMATED_CPM"
+                )
+            )
+            onDismiss()
+            return
+        }
+
         val ad = preRollAd
         if (ad != null) {
             val impressionId = "imp_" + UUID.randomUUID().toString().take(12)
